@@ -313,9 +313,6 @@ add_nodes_to_graph <- function (graph,
 
         edges_to_split_i <- edges_to_split [which (edges_to_split$n == i), ]
 
-        d_wt <- edges_to_split_i$d_weighted / edges_to_split_i$d
-        t_wt <- edges_to_split_i$time_weighted / edges_to_split_i$time
-        t_scale <- edges_to_split_i$time / edges_to_split_i$d
 
         new_edges_i <- lapply (seq_len (nrow (edges_to_split_i)), function (e) {
 
@@ -326,6 +323,10 @@ add_nodes_to_graph <- function (graph,
             edge_i$yto [1] <- pts$y [i]
             edge_i$xfr [2] <- pts$x [i]
             edge_i$yfr [2] <- pts$y [i]
+            d_wt <- edge_i$d_weighted / edge_i$d
+            t_wt <- edge_i$time_weighted / edge_i$time
+            t_scale <- edge_i$time / edge_i$d
+            
 
             xy_i <- data.frame (
                 x = as.numeric (c (edge_i [1, "xfr"], edge_i [1, "xto"], edge_i [2, "xto"])),

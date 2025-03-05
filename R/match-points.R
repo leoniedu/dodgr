@@ -332,11 +332,12 @@ add_nodes_to_graph <- function (graph,
                 x = as.numeric (c (edge_i [1, "xfr"], edge_i [1, "xto"], edge_i [2, "xto"])),
                 y = as.numeric (c (edge_i [1, "yfr"], edge_i [1, "yto"], edge_i [2, "yto"]))
             )
-            dmat <- geodist::geodist (xy_i)
+            dmat <- geodist::geodist (xy_i, measure = "geodesic")
 
             d_i <- geodist::geodist (
                 pts [i, c ("x", "y")],
-                pts [i, c ("x0", "y0")]
+                pts [i, c ("x0", "y0")],
+                measure = "geodesic"
             )
             d_i <- as.numeric (d_i [1, 1])
 

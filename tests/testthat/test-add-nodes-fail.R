@@ -1,29 +1,18 @@
 test_that("add_nodes_to_graph with multiple points on same edge", {
     # Create a simple graph with one edge
-    graph <- data.frame(
-        from = c("a", "a"),           # Two edges representing same street
-        to = c("b", "b"),             # in both directions
-        d = c(1, 1),
-        edge_id = c("e1", "e2"),
-        component = c(1, 1),
-        xfr = c(0, 0),
-        yfr = c(0, 0),
-        xto = c(1, 1),
-        yto = c(1, 1),
-        d_weighted = c(1, 1),
-        time = c(1, 1),
-        time_weighted = c(1, 1)
-    )
+  graph <- weight_streetnet(hampi)
+  graph <- graph[which.max(graph$d),]
+  # Create two points that will both match to this edge
+  xy <- data.frame(
+    x = runif(2, min=graph$from_lon, max=graph$to_lon),
+    y = runif(2, min=graph$from_lat, max=graph$to_lat))
 
-    # Create two points that will both match to this edge
-    xy <- data.frame(
-        x = c(0.3, 0.7),  # Two points along the same edge
-        y = c(0.3, 0.7)   # These will both match to the diagonal edge
-    )
-
-    # Run the function and examine output
-    result <- add_nodes_to_graph(graph, xy)
-    
+  # Run the function and examine output
+  result <- add_nodes_to_graph5(graph, xy
+                                , intersections_only=TRUE
+                                #, wt_profile = "foot", new_edge_type = "primary"
+  )
+  
     # Print details about the result
     print(paste("Number of rows in result:", nrow(result)))
     print("Result coordinates:")

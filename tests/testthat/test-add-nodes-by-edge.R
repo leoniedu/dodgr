@@ -3,6 +3,7 @@
 # 
 # skip_if (!test_all)
 
+library(dplyr)
 dodgr_cache_off ()
 clear_dodgr_cache ()
 
@@ -20,7 +21,6 @@ test_that ("add_nodes_to_graph_by_edge single point per edge", {
     x = min (verts$x) + runif (npts) * diff (range (verts$x)),
     y = min (verts$y) + runif (npts) * diff (range (verts$y))
   )
-  library(dplyr)
   # Match points to graph to verify they match to different edges
   pts <- match_pts_to_graph (graph, xy, distances = TRUE)%>%
     mutate(xy_index=1:n())%>%
@@ -184,6 +184,16 @@ test_that ("add_nodes_to_graph_by_edge preserves edge properties", {
     y = min (verts$y) + runif (npts) * diff (range (verts$y))
   )
   
+  # First, identify which edges will be split by finding the matching edges for each point
+  pts <- match_pts_to_graph (graph, xy, distances = TRUE)
+  
+  # Get the original edges that will be split
+  edges_to_split <- graph[pts$index, ]
+  
+  # Calculate the ratios for these specific edges
+  orig_d_ratios <- edges_to_split$d_weighted / edges_to_split$d
+  orig_time_ratios <- edges_to_split$time_weighted / edges_to_split$time
+  
   # Process with both functions
   graph1 <- add_nodes_to_graph (graph, xy)
   graph2 <- add_nodes_to_graph_by_edge (graph, xy)
@@ -192,35 +202,108 @@ test_that ("add_nodes_to_graph_by_edge preserves edge properties", {
   expect_equal (sort (names (graph)), sort (names (graph1)))
   expect_equal (sort (names (graph)), sort (names (graph2)))
   
-  # Check that the d_weighted/d ratio is preserved (within tolerance)
-  # For the original edges
-  orig_ratio <- mean (graph$d_weighted / graph$d, na.rm = TRUE)
+  # For each original edge that was split, find the corresponding new edges
+  for (i in seq_len(nrow(edges_to_split))) {
+    edge_id <- edges_to_split$edge_id[i]
+    
+    # Find new edges in graph1 that replaced this edge
+    # These will have edge_ids that start with the original edge_id followed by "_"
+    new_edges1 <- graph1[grep(paste0("^", edge_id, "_"), graph1$edge_id), ]
+    
+    # Find new edges in graph2 that replaced this edge
+    new_edges2 <- graph2[grep(paste0("^", edge_id, "_"), graph2$edge_id), ]
+    
+    # Skip if no matching edges found (could happen if the point was very close to a vertex)
+    if (nrow(new_edges1) == 0 || nrow(new_edges2) == 0) next
+    
+    # Calculate the ratios for the new edges
+    new_d_ratios1 <- new_edges1$d_weighted / new_edges1$d
+    new_time_ratios1 <- new_edges1$time_weighted / new_edges1$time
+    
+    new_d_ratios2 <- new_edges2$d_weighted / new_edges2$d
+    new_time_ratios2 <- new_edges2$time_weighted / new_edges2$time
+    
+    # The ratios for the new edges should be similar to the original edge
+    # Use mean to account for small variations due to floating point arithmetic
+    expect_equal (orig_d_ratios[i], mean(new_d_ratios1), tolerance = 0.01)
+    expect_equal (orig_time_ratios[i], mean(new_time_ratios1), tolerance = 0.01)
+    
+    expect_equal (orig_d_ratios[i], mean(new_d_ratios2), tolerance = 0.01)
+    expect_equal (orig_time_ratios[i], mean(new_time_ratios2), tolerance = 0.01)
+    
+    # Also check that both functions produce similar results
+    expect_equal (mean(new_d_ratios1), mean(new_d_ratios2), tolerance = 0.01)
+    expect_equal (mean(new_time_ratios1), mean(new_time_ratios2), tolerance = 0.01)
+  }
   
-  # For the new edges in graph1
-  new_edges1 <- setdiff (
-    paste (graph1$from_id, graph1$to_id, sep = "-"),
-    paste (graph$from_id, graph$to_id, sep = "-")
+  # Print some diagnostic information
+  cat("\nEdge property preservation test:\n")
+  cat("Original edges to split:", nrow(edges_to_split), "\n")
+  cat("Original d_weighted/d ratios:", mean(orig_d_ratios), "\n")
+  cat("Original time_weighted/time ratios:", mean(orig_time_ratios), "\n")
+})
+
+test_that ("add_nodes_to_graph_by_edge handles dist_tol parameter correctly", {
+  
+  # Load a sample graph
+  graph <- weight_streetnet (hampi, wt_profile = "foot")
+  verts <- dodgr_vertices (graph)
+  
+  # Create a set of points that will be placed very close to vertices
+  # to test the dist_tol parameter
+  set.seed (5)
+  npts <- 10
+  
+  # Get some random vertices from the graph
+  sample_verts <- verts[sample(nrow(verts), npts), ]
+  
+  # Create points that are very close to these vertices (within 1e-5 units)
+  xy <- data.frame(
+    x = sample_verts$x + rnorm(npts, 0, 1e-5),
+    y = sample_verts$y + rnorm(npts, 0, 1e-5)
   )
-  new_idx1 <- which (paste (graph1$from_id, graph1$to_id, sep = "-") %in% new_edges1)
-  new_ratio1 <- mean (graph1$d_weighted [new_idx1] / graph1$d [new_idx1], na.rm = TRUE)
   
-  # For the new edges in graph2
-  new_edges2 <- setdiff (
-    paste (graph2$from_id, graph2$to_id, sep = "-"),
-    paste (graph$from_id, graph$to_id, sep = "-")
-  )
-  new_idx2 <- which (paste (graph2$from_id, graph2$to_id, sep = "-") %in% new_edges2)
-  new_ratio2 <- mean (graph2$d_weighted [new_idx2] / graph2$d [new_idx2], na.rm = TRUE)
+  # Test with different dist_tol values
   
-  # The ratios should be similar
-  expect_equal (orig_ratio, new_ratio1, tolerance = 0.1)
-  expect_equal (orig_ratio, new_ratio2, tolerance = 0.1)
+  # With a small tolerance, points should be treated as separate
+  small_tol <- 1e-6
+  graph1_small <- add_nodes_to_graph(graph, xy, dist_tol = small_tol)
+  graph2_small <- add_nodes_to_graph_by_edge(graph, xy, dist_tol = small_tol)
   
-  # Check that time and time_weighted are also preserved correctly
-  time_ratio_orig <- mean (graph$time_weighted / graph$time, na.rm = TRUE)
-  time_ratio1 <- mean (graph1$time_weighted [new_idx1] / graph1$time [new_idx1], na.rm = TRUE)
-  time_ratio2 <- mean (graph2$time_weighted [new_idx2] / graph2$time [new_idx2], na.rm = TRUE)
+  # With a larger tolerance, points should be merged with existing vertices
+  large_tol <- 1e-4
+  graph1_large <- add_nodes_to_graph(graph, xy, dist_tol = large_tol)
+  graph2_large <- add_nodes_to_graph_by_edge(graph, xy, dist_tol = large_tol)
   
-  expect_equal (time_ratio_orig, time_ratio1, tolerance = 0.1)
-  expect_equal (time_ratio_orig, time_ratio2, tolerance = 0.1)
+  # Compare results
+  
+  # With small tolerance, both functions should add more edges
+  expect_true(nrow(graph1_small) > nrow(graph))
+  expect_true(nrow(graph2_small) > nrow(graph))
+  
+  # With large tolerance, both functions should add fewer edges
+  # compared to the small tolerance case
+  expect_true(nrow(graph1_large) <= nrow(graph1_small))
+  expect_true(nrow(graph2_large) <= nrow(graph2_small))
+  
+  # The edge-based approach should be consistent with the original function
+  # in how it handles the tolerance parameter
+  small_diff_ratio <- abs(nrow(graph1_small) - nrow(graph2_small)) / nrow(graph1_small)
+  large_diff_ratio <- abs(nrow(graph1_large) - nrow(graph2_large)) / nrow(graph1_large)
+  
+  # The difference between the two approaches should be similar regardless of tolerance
+  expect_true(small_diff_ratio < 0.2) # Allow up to 20% difference
+  expect_true(large_diff_ratio < 0.2)
+  
+  # Print diagnostic information
+  cat("\ndist_tol parameter comparison:\n")
+  cat("Original graph edges:", nrow(graph), "\n")
+  cat("Small tolerance (1e-6):\n")
+  cat("  add_nodes_to_graph edges:", nrow(graph1_small), "\n")
+  cat("  add_nodes_to_graph_by_edge edges:", nrow(graph2_small), "\n")
+  cat("Large tolerance (1e-4):\n")
+  cat("  add_nodes_to_graph edges:", nrow(graph1_large), "\n")
+  cat("  add_nodes_to_graph_by_edge edges:", nrow(graph2_large), "\n")
+  cat("Edge difference ratio (small tolerance):", small_diff_ratio, "\n")
+  cat("Edge difference ratio (large tolerance):", large_diff_ratio, "\n")
 })

@@ -1,18 +1,18 @@
-#' Add nodes to a graph by processing edges
+#' Add Nodes to Graph by Edge
 #'
-#' This function is similar to \link{add_nodes_to_graph}, but processes edges rather
-#' than points. This is more efficient when multiple points match the same edge.
+#' Add nodes to a graph by matching them to the nearest edges, and processing
+#' edges with multiple points in one go. This is more efficient than
+#' \link{add_nodes_to_graph} when multiple points match to the same edge.
 #'
 #' @inheritParams add_nodes_to_graph
-#' @return A modified version of the input graph with additional nodes and edges
-#' connecting the points specified in \code{xy} to the nearest points on the graph.
+#' @return Modified version of graph with nodes added at specified locations
 #' @export
+#' @importFrom dplyr select rename left_join mutate n distinct
 #' @examples
 #' \dontrun{
-#' graph <- weight_streetnet (hampi)
+#' graph <- weight_streetnet (hampi, wt_profile = "foot")
+#' npts <- 100
 #' verts <- dodgr_vertices (graph)
-#' set.seed (2)
-#' npts <- 10
 #' xy <- data.frame (
 #'     x = min (verts$x) + runif (npts) * diff (range (verts$x)),
 #'     y = min (verts$y) + runif (npts) * diff (range (verts$y))
@@ -49,13 +49,13 @@ add_nodes_to_graph_by_edge <- function (graph,
     pts$from <- graph_std$from[pts$index]
     pts$to <- graph_std$to[pts$index]
     pts_bi <- pts %>%
-        select(-index) %>%
+        dplyr::select(-index) %>%
         dplyr::rename (from=to, to=from
                        #, x0=x, x=x0, y0=y,y=y0
                        ) %>%
-        left_join(graph_std %>% 
-                      mutate(index=1:n())%>%
-                      select(from,to, index))
+        dplyr::left_join(graph_std %>% 
+                      dplyr::mutate(index=1:dplyr::n())%>%
+                      dplyr::select(from,to, index), by=c("to", "from"))
     pts <- unique(rbind(pts, pts_bi[names(pts)]))
     
     # Function to generate unique IDs
@@ -86,7 +86,7 @@ add_nodes_to_graph_by_edge <- function (graph,
         current_edge_1 <- current_edge[1,]
         #  Get all points that match this edge instance
         edge_pts <- pts[pts$pts_index %in% current_edge$n, ]
-        edge_pts <- edge_pts%>%distinct(pts_index, .keep_all = TRUE)
+        edge_pts <- edge_pts%>%dplyr::distinct(pts_index, .keep_all = TRUE)
         # Skip if no points
         if (nrow(edge_pts) == 0) stop("No points found.")
         
@@ -117,6 +117,102 @@ add_nodes_to_graph_by_edge <- function (graph,
         sorted_indices <- order(proj_distances)
         edge_pts <- edge_pts[sorted_indices, ]
         proj_distances <- proj_distances[sorted_indices]
+        
+        # Flag to track if we need to skip normal processing
+        skip_normal_processing <- FALSE
+        
+        # Check if any points are too close to the edge endpoints (using dist_tol)
+        for (p in seq_len(nrow(edge_pts))) {
+            # Create a data frame with the three points for this segment:
+            # 1. Start of the segment
+            # 2. Projection point
+            # 3. End of the segment
+            xy_i <- data.frame(
+                x = as.numeric(c(current_edge_1$xfr, edge_pts$x[p], current_edge_1$xto)),
+                y = as.numeric(c(current_edge_1$yfr, edge_pts$y[p], current_edge_1$yto))
+            )
+            dmat <- geodist::geodist(xy_i, measure = "geodesic")
+            
+            # Check if any points are too close
+            if (any(dmat[upper.tri(dmat)] < dist_tol)) {
+                # Special handling for very close points
+                edge_i <- current_edge_1
+                edge_i_new <- rbind(edge_i, edge_i) # for edges to new point
+                
+                # Reverse 2nd edge:
+                edge_i_new$from[2] <- edge_i_new$to[1]
+                edge_i_new$to[2] <- edge_i_new$from[1]
+                edge_i_new$xfr[2] <- edge_i_new$xto[1]
+                edge_i_new$xto[2] <- edge_i_new$xfr[1]
+                edge_i_new$yfr[2] <- edge_i_new$yto[1]
+                edge_i_new$yto[2] <- edge_i_new$yfr[1]
+                
+                # Find which points are closest
+                d_i_min <- c(1, 1, 2)[which.min(dmat[upper.tri(dmat)])]
+                if (d_i_min == 1) {
+                    edge_i_new <- edge_i_new[2:1, ]
+                }
+                
+                # Skip the normal segment creation and use this simpler structure
+                all_segments <- edge_i_new
+                
+                # If not intersections_only, add connections to original points
+                if (!intersections_only) {
+                    # Create edges to original point (bidirectional)
+                    new_edges <- rbind(current_edge_1, current_edge_1)
+                    
+                    # Set up connection to original point
+                    new_id <- genhash(10L)
+                    new_edges$from[1] <- new_edges$to[2] <- new_id
+                    new_edges$xfr[1] <- new_edges$xto[2] <- edge_pts$x0[p]
+                    new_edges$yfr[1] <- new_edges$yto[2] <- edge_pts$y0[p]
+                    new_edges$to[1] <- new_edges$from[2] <- edge_i_new$from[1]  # Connect to the first point
+                    new_edges$xto[1] <- new_edges$xfr[2] <- edge_pts$x[p]
+                    new_edges$yto[1] <- new_edges$yfr[2] <- edge_pts$y[p]
+                    
+                    # Calculate distance using geodesic distance
+                    d_i <- geodist::geodist(
+                        data.frame(
+                            x = c(edge_pts$x[p], edge_pts$x0[p]),
+                            y = c(edge_pts$y[p], edge_pts$y0[p])
+                        ),
+                        measure = "geodesic"
+                    )[1, 2]
+                    
+                    # Ensure no zero distances
+                    if (d_i < 1e-9) d_i <- 1e-9
+                    
+                    # Update distances and weights - preserve weight ratios exactly
+                    new_edges$d <- d_i
+                    new_edges$d_weighted <- d_i * orig_ratio
+                    new_edges$time <- d_i * (current_edge_1$time / current_edge_1$d)
+                    new_edges$time_weighted <- d_i * (current_edge_1$time / current_edge_1$d) * orig_time_ratio
+                    
+                    # Generate unique edge IDs
+                    new_edges$edge_id <- c(
+                        paste0("to_orig_", p, "_", genhash(5)),
+                        paste0("from_orig_", p, "_", genhash(5))
+                    )
+                    
+                    # Add to all segments
+                    all_segments <- rbind(all_segments, new_edges)
+                }
+                
+                # Add to all edges split
+                all_edges_split[[length(all_edges_split) + 1L]] <- all_segments
+                
+                # Set flag to skip normal processing
+                skip_normal_processing <- TRUE
+                break  # Exit the inner loop
+            }
+        }
+        
+        # Skip normal processing if needed
+        if (skip_normal_processing) {
+            next
+        }
+        
+        # If we get here, none of the points were too close, so continue with normal segment creation
         # Now split the edge into segments
         n_segments <- nrow(edge_pts) + 1
         
@@ -219,7 +315,7 @@ add_nodes_to_graph_by_edge <- function (graph,
         }
         
         # Add to all edges split
-        all_edges_split[[length(all_edges_split) + 1]] <- all_segments
+        all_edges_split[[length(all_edges_split) + 1L]] <- all_segments
     }
     
     # Combine all split edges

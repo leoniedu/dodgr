@@ -25,364 +25,229 @@ add_nodes_to_graph_by_edge <- function (graph,
                                         xy,
                                         dist_tol = 1e-6,
                                         intersections_only = FALSE) {
-
-    pts <- match_pts_to_graph (graph, xy, distances = TRUE)
+    
+    # Add x0 and y0 columns to xy
     xy <- pre_process_xy (xy)
-    pts$x0 <- xy [, 1]
-    pts$y0 <- xy [, 2]
-
+    
+    # Standardize graph for calculations
     gr_cols <- dodgr_graph_cols (graph)
     gr_cols <- unlist (gr_cols [which (!is.na (gr_cols))])
     graph_std <- graph [, gr_cols] # standardise column names
     names (graph_std) <- names (gr_cols)
-
-    # Create a unique identifier for each edge (ignoring direction)
-    edge_ids <- paste0 (
-        pmin (graph_std$from, graph_std$to),
-        "-",
-        pmax (graph_std$from, graph_std$to)
-    )
     
-    # Create a mapping from points to edges
-    point_to_edge <- lapply (seq_along (pts$index), function (i) {
-        # Find all instances of this edge (including bi-directional)
-        matched_edge <- pts$index [i]
-        edge_from <- graph_std$from [matched_edge]
-        edge_to <- graph_std$to [matched_edge]
-        
-        # Find all edges that match (including reverse direction)
-        edge_indices <- which (
-            (graph_std$from == edge_from & graph_std$to == edge_to) |
-            (graph_std$from == edge_to & graph_std$to == edge_from)
-        )
-        
-        # Return point index and all matching edge indices
-        list (
-            point_index = i,
-            edge_indices = edge_indices,
-            edge_id = edge_ids [edge_indices [1]] # Use first instance for grouping
-        )
-    })
-    
-    # Create a mapping from edges to points
-    unique_edge_ids <- unique (sapply (point_to_edge, function (x) x$edge_id))
-    edge_to_points <- lapply (unique_edge_ids, function (eid) {
-        # Find all points that match this edge
-        point_indices <- which (sapply (point_to_edge, function (x) x$edge_id == eid))
-        
-        # Get all edge instances for this edge ID
-        all_edge_indices <- unique (unlist (
-            lapply (point_to_edge [point_indices], function (x) x$edge_indices)
-        ))
-        
-        list (
-            edge_id = eid,
-            edge_indices = all_edge_indices,
-            point_indices = sapply (point_to_edge [point_indices], function (x) x$point_index)
-        )
-    })
-    
-    # Prepare edges to split
-    all_edge_indices <- unique (unlist (lapply (edge_to_points, function (x) x$edge_indices)))
-    edges_to_split <- graph_std [all_edge_indices, ]
-    graph_to_add <- graph [all_edge_indices, ]
-    
-    # Remove these edges from the graph
-    graph_std <- graph_std [-all_edge_indices, ]
-    graph <- graph [-all_edge_indices, ]
-
-    genhash <- function (len = 10) {
-        paste0 (sample (c (0:9, letters, LETTERS), size = len), collapse = "")
+    # Match points to the standardized graph
+    pts <- match_pts_to_graph (graph_std, xy, distances = TRUE)
+    # Return original graph if no points match
+    if (nrow (pts) == 0) {
+        return (graph)
     }
     
-    # Process each unique edge with all its matching points
-    edges_split <- lapply (edge_to_points, function (edge_group) {
-        
+    # Add original coordinates to pts
+    pts$x0 <- xy [, 1]
+    pts$y0 <- xy [, 2]
+    pts$pts_index <- seq_len (nrow (pts))
+    pts$from <- graph_std$from[pts$index]
+    pts$to <- graph_std$to[pts$index]
+    pts_bi <- pts %>%
+        select(-index) %>%
+        dplyr::rename (from=to, to=from
+                       #, x0=x, x=x0, y0=y,y=y0
+                       ) %>%
+        left_join(graph_std %>% 
+                      mutate(index=1:n())%>%
+                      select(from,to, index))
+    pts <- unique(rbind(pts, pts_bi[names(pts)]))
+    
+    # Function to generate unique IDs
+    genhash <- function (len = 16L) {
+        paste0 (sample (c (0:9, letters, LETTERS), size = len, replace = TRUE), collapse = "")
+    }
+    
+    # Extract edges that need to be split
+    edges_to_split <- graph_std [pts$index, ]
+    # Add index for tracking
+    edges_to_split$n <- pts$pts_index
+    
+    graph_to_add <- graph [pts$index, ]
+    
+    # Remove edges to be split from the graph
+    graph_std <- graph_std [-pts$index, ]
+    graph <- graph [-pts$index, ]
+    
+    
+    # Group edges by edge_id
+    unique_edges <- unique(edges_to_split$edge_id)
+    all_edges_split <- list()
+    
+    # Process each unique edge
+    for (edge_id in unique_edges) {
         # Get all instances of this edge
-        edge_indices <- edge_group$edge_indices
-        edge_template <- edges_to_split [edge_indices [1], ]
+        current_edge <- edges_to_split[edges_to_split$edge_id == edge_id, ]
+        current_edge_1 <- current_edge[1,]
+        #  Get all points that match this edge instance
+        edge_pts <- pts[pts$pts_index %in% current_edge$n, ]
+        edge_pts <- edge_pts%>%distinct(pts_index, .keep_all = TRUE)
+        # Skip if no points
+        if (nrow(edge_pts) == 0) stop("No points found.")
         
-        # Get all points that match this edge
-        point_indices <- edge_group$point_indices
+        # Store the original ratios - these will be used directly
+        orig_d_weighted <- current_edge_1$d_weighted
+        orig_d <- current_edge_1$d
+        orig_ratio <- orig_d_weighted / orig_d
+        orig_time_ratio <- current_edge_1$time_weighted / current_edge_1$time
         
-        # If there's only one point, use a simplified approach
-        if (length (point_indices) == 1) {
-            i <- point_indices
-            
-            # Get all instances of this edge (might be bi-directional)
-            edges_i <- edges_to_split [edge_indices, ]
-            
-            new_edges_i <- lapply (seq_len (nrow (edges_i)), function (e) {
-                
-                # Split edges either side of perpendicular points of intersection:
-                edge_i <- edges_i [c (e, e), ]
-                edge_i$to [1] <- edge_i$from [2] <- genhash ()
-                edge_i$xto [1] <- pts$x [i]
-                edge_i$yto [1] <- pts$y [i]
-                edge_i$xfr [2] <- pts$x [i]
-                edge_i$yfr [2] <- pts$y [i]
-                d_wt <- edge_i$d_weighted / edge_i$d
-                t_wt <- edge_i$time_weighted / edge_i$time
-                t_scale <- edge_i$time / edge_i$d
-                
-                xy_i <- data.frame (
-                    x = as.numeric (c (edge_i [1, "xfr"], edge_i [1, "xto"], edge_i [2, "xto"])),
-                    y = as.numeric (c (edge_i [1, "yfr"], edge_i [1, "yto"], edge_i [2, "yto"]))
-                )
-                dmat <- geodist::geodist (xy_i, measure = "geodesic")
-                
-                d_i <- geodist::geodist (
-                    pts [i, c ("x", "y")],
-                    pts [i, c ("x0", "y0")],
-                    measure = "geodesic"
-                )
-                d_i <- as.numeric (d_i [1, 1])
-                
-                if (any (dmat [upper.tri (dmat)] < dist_tol)) {
-                    
-                    edge_i <- edges_i [e, ]
-                    edge_i_new <- rbind (edge_i, edge_i) # for edges to new point
-                    # Reverse 2nd edge:
-                    edge_i_new$from [2] <- edge_i_new$to [1]
-                    edge_i_new$to [2] <- edge_i_new$from [1]
-                    edge_i_new$xfr [2] <- edge_i_new$xto [1]
-                    edge_i_new$xto [2] <- edge_i_new$xfr [1]
-                    edge_i_new$yfr [2] <- edge_i_new$yto [1]
-                    edge_i_new$yto [2] <- edge_i_new$yfr [1]
-                    
-                    d_i_min <- c (1, 1, 2) [which.min (dmat [upper.tri (dmat)])]
-                    if (d_i_min == 1) {
-                        edge_i_new <- edge_i_new [2:1, ]
-                    }
-                    
-                } else {
-                    
-                    edge_i$d [1] <- dmat [1, 2]
-                    edge_i$d [2] <- dmat [2, 3]
-                    
-                    edge_i$d_weighted <- edge_i$d * d_wt
-                    edge_i$time <- edge_i$d * t_scale
-                    edge_i$time_weighted <- edge_i$time * t_wt
-                    
-                    edge_i$edge_id <- paste0 (
-                        edge_i$edge_id,
-                        "_",
-                        LETTERS [seq_len (nrow (edge_i))]
-                    )
-                    
-                    edge_i_new <- edge_i # already 2 rows
-                }
-                
-                if (!intersections_only) {
-                    
-                    # Then add edges out to new point:
-                    edge_i_new$from [1] <- edge_i_new$to [2] <- genhash (10L)
-                    edge_i_new$xfr [1] <- pts$x0 [i]
-                    edge_i_new$yfr [1] <- pts$y0 [i]
-                    edge_i_new$xto [2] <- pts$x0 [i]
-                    edge_i_new$yto [2] <- pts$y0 [i]
-                    
-                    edge_i_new$d <- d_i
-                    edge_i_new$d_weighted <- d_i * d_wt
-                    edge_i_new$time <- d_i * t_scale
-                    edge_i_new$time_weighted <- edge_i_new$time * t_wt
-                    
-                    edge_i_new$edge_id <- vapply (
-                        seq_len (nrow (edge_i_new)),
-                        function (i) genhash (10),
-                        character (1L)
-                    )
-                    
-                    edge_i <- rbind (edge_i, edge_i_new)
-                }
-                
-                return (edge_i)
-            })
-            
-            return (do.call (rbind, new_edges_i))
-        } else {
-            # Multiple points match this edge - process them together
-            
-            # Process all instances of this edge (might be bi-directional)
-            all_new_edges <- lapply (edge_indices, function (edge_idx) {
-                edge_template <- edges_to_split [edge_idx, ]
-                
-                # Extract coordinates of the edge endpoints
-                from_x <- edge_template$xfr
-                from_y <- edge_template$yfr
-                to_x <- edge_template$xto
-                to_y <- edge_template$yto
-                
-                # Calculate edge length for reference
-                edge_length <- sqrt ((to_x - from_x)^2 + (to_y - from_y)^2)
-                
-                # Calculate distances along the edge for each point
-                # This helps order the points from start to end of the edge
-                point_positions <- lapply (point_indices, function (i) {
-                    # Get projection point coordinates
-                    proj_x <- pts$x [i]
-                    proj_y <- pts$y [i]
-                    
-                    # Calculate distance from 'from' node to projection
-                    # Using vector projection to handle non-straight edges correctly
-                    edge_vec_x <- to_x - from_x
-                    edge_vec_y <- to_y - from_y
-                    point_vec_x <- proj_x - from_x
-                    point_vec_y <- proj_y - from_y
-                    
-                    # Project point vector onto edge vector
-                    dot_product <- edge_vec_x * point_vec_x + edge_vec_y * point_vec_y
-                    edge_length_sq <- edge_vec_x^2 + edge_vec_y^2
-                    projection_ratio <- dot_product / edge_length_sq
-                    
-                    # Clamp ratio between 0 and 1 to handle points that project outside the edge
-                    projection_ratio <- max (0, min (1, projection_ratio))
-                    
-                    # Calculate distance along the edge
-                    dist_from_start <- projection_ratio * edge_length
-                    
-                    list (
-                        index = i,
-                        x = proj_x,
-                        y = proj_y,
-                        x0 = pts$x0 [i],
-                        y0 = pts$y0 [i],
-                        dist_from_start = dist_from_start,
-                        projection_ratio = projection_ratio
-                    )
-                })
-                
-                # Sort points by their position along the edge
-                point_positions <- point_positions [order (sapply (point_positions, function (p) p$dist_from_start))]
-                
-                # Now create edge segments for each point
-                d_wt <- edge_template$d_weighted / edge_template$d
-                t_wt <- edge_template$time_weighted / edge_template$time
-                t_scale <- edge_template$time / edge_template$d
-                
-                # Create segments between points
-                segments <- list ()
-                
-                # First segment: from original start to first point
-                first_segment <- edge_template
-                first_segment$to <- genhash ()
-                first_segment$xto <- point_positions [[1]]$x
-                first_segment$yto <- point_positions [[1]]$y
-                segments [[1]] <- first_segment
-                
-                # Middle segments: between consecutive points
-                if (length (point_positions) > 1) {
-                    for (j in 1:(length (point_positions) - 1)) {
-                        mid_segment <- edge_template
-                        mid_segment$from <- segments [[j]]$to
-                        mid_segment$to <- genhash ()
-                        mid_segment$xfr <- point_positions [[j]]$x
-                        mid_segment$yfr <- point_positions [[j]]$y
-                        mid_segment$xto <- point_positions [[j + 1]]$x
-                        mid_segment$yto <- point_positions [[j + 1]]$y
-                        segments [[j + 1]] <- mid_segment
-                    }
-                }
-                
-                # Last segment: from last point to original end
-                last_segment <- edge_template
-                last_segment$from <- segments [[length (segments)]]$to
-                last_segment$xfr <- point_positions [[length (point_positions)]]$x
-                last_segment$yfr <- point_positions [[length (point_positions)]]$y
-                segments [[length (segments) + 1]] <- last_segment
-                
-                # Convert segments to data frame
-                segments_df <- do.call (rbind, segments)
-                
-                # Update distances and weights for all segments
-                for (j in 1:nrow (segments_df)) {
-                    xy_i <- data.frame (
-                        x = c (segments_df$xfr [j], segments_df$xto [j]),
-                        y = c (segments_df$yfr [j], segments_df$yto [j])
-                    )
-                    dmat <- geodist::geodist (xy_i, measure = "geodesic")
-                    segments_df$d [j] <- as.numeric (dmat [1, 2])
-                    segments_df$d_weighted [j] <- segments_df$d [j] * d_wt
-                    segments_df$time [j] <- segments_df$d [j] * t_scale
-                    segments_df$time_weighted [j] <- segments_df$time [j] * t_wt
-                    segments_df$edge_id [j] <- paste0 (edge_template$edge_id, "_", LETTERS [j])
-                }
-                
-                # If we need to add connections to original points
-                if (!intersections_only) {
-                    point_connections <- lapply (point_positions, function (p) {
-                        # Create two edges (to and from) for each point
-                        conn <- rbind (edge_template, edge_template)
-                        
-                        # Generate a unique ID for the original point
-                        point_id <- genhash (10L)
-                        
-                        # Edge from projection to original point
-                        conn$from [1] <- segments_df$to [which (segments_df$xto == p$x & segments_df$yto == p$y) [1]]
-                        conn$to [1] <- point_id
-                        conn$xfr [1] <- p$x
-                        conn$yfr [1] <- p$y
-                        conn$xto [1] <- p$x0
-                        conn$yto [1] <- p$y0
-                        
-                        # Edge from original point to projection
-                        conn$from [2] <- point_id
-                        conn$to [2] <- conn$from [1]
-                        conn$xfr [2] <- p$x0
-                        conn$yfr [2] <- p$y0
-                        conn$xto [2] <- p$x
-                        conn$yto [2] <- p$y
-                        
-                        # Calculate distance from projection to original point
-                        d_i <- geodist::geodist (
-                            data.frame (x = p$x, y = p$y),
-                            data.frame (x = p$x0, y = p$y0),
-                            measure = "geodesic"
-                        )
-                        d_i <- as.numeric (d_i [1, 1])
-                        
-                        # Update distances and weights
-                        conn$d <- d_i
-                        conn$d_weighted <- d_i * d_wt
-                        conn$time <- d_i * t_scale
-                        conn$time_weighted <- conn$time * t_wt
-                        
-                        # Generate unique edge IDs
-                        conn$edge_id <- vapply (
-                            1:2,
-                            function (i) genhash (10),
-                            character (1L)
-                        )
-                        
-                        return (conn)
-                    })
-                    
-                    # Combine segments with point connections
-                    all_edges <- rbind (segments_df, do.call (rbind, point_connections))
-                    return (all_edges)
-                } else {
-                    return (segments_df)
-                }
-            })
-            
-            return (do.call (rbind, all_new_edges))
+        # Sort points along the edge
+        # Calculate distance from start of edge to each projection point
+        start_point <- c(current_edge$xfr, current_edge$yfr)
+        end_point <- c(current_edge$xto, current_edge$yto)
+        
+        # Calculate vector from start to end
+        edge_vector <- end_point - start_point
+        edge_length <- sqrt(sum(edge_vector^2))
+        
+        # Calculate projection of each point onto the edge
+        proj_distances <- numeric(nrow(edge_pts))
+        for (p in seq_len(nrow(edge_pts))) {
+            point_vector <- c(edge_pts$x[p], edge_pts$y[p]) - start_point
+            # Projection distance along the edge
+            proj_distances[p] <- sum(point_vector * edge_vector) / edge_length
         }
-    })
+        
+        # Sort points by projection distance
+        sorted_indices <- order(proj_distances)
+        edge_pts <- edge_pts[sorted_indices, ]
+        proj_distances <- proj_distances[sorted_indices]
+        # Now split the edge into segments
+        n_segments <- nrow(edge_pts) + 1
+        
+        # Create a list to store all segments
+        segments <- vector("list", n_segments)
+        
+        # Create first segment
+        segments[[1]] <- current_edge_1
+        segments[[1]]$to <- genhash()
+        segments[[1]]$xto <- edge_pts$x[1]
+        segments[[1]]$yto <- edge_pts$y[1]
+        
+        # Create middle segments
+        if (n_segments > 2) {
+            for (s in 2:(n_segments-1)) {
+                segments[[s]] <- current_edge_1
+                segments[[s]]$from <- segments[[s-1]]$to
+                segments[[s]]$to <- genhash()
+                segments[[s]]$xfr <- edge_pts$x[s-1]
+                segments[[s]]$yfr <- edge_pts$y[s-1]
+                segments[[s]]$xto <- edge_pts$x[s]
+                segments[[s]]$yto <- edge_pts$y[s]
+            }
+        }
+        
+        # Create last segment
+        segments[[n_segments]] <- current_edge_1
+        segments[[n_segments]]$from <- if (n_segments > 1) segments[[n_segments-1]]$to else segments[[1]]$to
+        segments[[n_segments]]$xfr <- edge_pts$x[n_segments-1]
+        segments[[n_segments]]$yfr <- edge_pts$y[n_segments-1]
+        
+        # Calculate distances and update weights for each segment
+        for (s in seq_len(n_segments)) {
+            # Calculate distance for this segment using geodesic distance
+            segment_xy <- data.frame(
+                x = c(segments[[s]]$xfr, segments[[s]]$xto),
+                y = c(segments[[s]]$yfr, segments[[s]]$yto)
+            )
+            segment_dist <- geodist::geodist(segment_xy, measure = "geodesic")[1, 2]
+            
+            # Ensure no zero distances (use a small value if distance is zero)
+            if (segment_dist < 1e-9) segment_dist <- 1e-9
+            
+            # Update segment properties - preserve weight ratios exactly
+            segments[[s]]$d <- segment_dist
+            segments[[s]]$d_weighted <- segment_dist * orig_ratio
+            segments[[s]]$time <- segment_dist * (current_edge_1$time / current_edge_1$d)
+            segments[[s]]$time_weighted <- segment_dist * (current_edge_1$time / current_edge_1$d) * orig_time_ratio
+            
+            # Update edge_id to make it unique
+            segments[[s]]$edge_id <- paste0(segments[[s]]$edge_id, "_", LETTERS[s])
+        }
+        
+        # Combine all segments
+        all_segments <- do.call(rbind, segments)
+        
+        # If not intersections_only, add connections to original points
+        if (!intersections_only) {
+            # For each projection point, add edges to the original point
+            for (p in seq_len(nrow(edge_pts))) {
+                # Create edges to original point (bidirectional)
+                new_edges <- rbind(current_edge_1, current_edge_1)
+                
+                # Set up connection to original point
+                new_id <- genhash(10L)
+                new_edges$from[1] <- new_edges$to[2] <- new_id
+                new_edges$xfr[1] <- new_edges$xto[2] <- edge_pts$x0[p]
+                new_edges$yfr[1] <- new_edges$yto[2] <- edge_pts$y0[p]
+                new_edges$to[1] <- new_edges$from[2] <- if (p < n_segments) segments[[p]]$to else segments[[n_segments]]$from
+                new_edges$xto[1] <- new_edges$xfr[2] <- edge_pts$x[p]
+                new_edges$yto[1] <- new_edges$yfr[2] <- edge_pts$y[p]
+                
+                # Calculate distance using geodesic distance
+                d_i <- geodist::geodist(
+                    data.frame(
+                        x = c(edge_pts$x[p], edge_pts$x0[p]),
+                        y = c(edge_pts$y[p], edge_pts$y0[p])
+                    ),
+                    measure = "geodesic"
+                )[1, 2]
+                
+                # Ensure no zero distances
+                if (d_i < 1e-9) d_i <- 1e-9
+                
+                # Update distances and weights - preserve weight ratios exactly
+                new_edges$d <- d_i
+                new_edges$d_weighted <- d_i * orig_ratio
+                new_edges$time <- d_i * (current_edge_1$time / current_edge_1$d)
+                new_edges$time_weighted <- d_i * (current_edge_1$time / current_edge_1$d) * orig_time_ratio
+                
+                # Generate unique edge IDs
+                new_edges$edge_id <- c(
+                    paste0("to_orig_", p, "_", genhash(5)),
+                    paste0("from_orig_", p, "_", genhash(5))
+                )
+                
+                # Add to all segments
+                all_segments <- rbind(all_segments, new_edges)
+            }
+        }
+        
+        # Add to all edges split
+        all_edges_split[[length(all_edges_split) + 1]] <- all_segments
+    }
     
-    edges_split <- do.call (rbind, edges_split)
+    # Combine all split edges
+    if (length(all_edges_split) == 0) {
+        return(graph)  # No edges were split
+    }
     
-    # Add original edge IDs for matching back to the graph
-    edges_split$edge_id_orig <- rep (
-        edges_to_split$edge_id,
-        times = sapply (edge_to_points, function (x) nrow (edges_split) / length (all_edge_indices))
-    )
+    edges_split <- do.call(rbind, all_edges_split)
     
     # Then match edges_split back on to original graph:
-    graph_to_add <- graph_to_add [match (edges_split$edge_id_orig, graph_to_add$edge_id), ]
+    graph_to_add <- graph_to_add [edges_split$n, ]
     gr_cols <- gr_cols [which (!is.na (gr_cols))]
     for (g in seq_along (gr_cols)) {
         graph_to_add [, gr_cols [g]] <- edges_split [[names (gr_cols) [g]]]
     }
     
     return (rbind (graph, graph_to_add))
+    
+    
+    # Convert edges_split back to original graph format
+    new_edges <- edges_split[,names(graph_std)]
+    for (g in seq_along(gr_cols)) {
+        if (names(gr_cols)[g] %in% names(new_edges)) {
+            new_edges[[gr_cols[g]]] <- new_edges[[names(gr_cols)[g]]]
+        }
+    }
+    # Combine the modified graph with the original
+    result <- rbind(graph, new_edges[, names(graph)])
+    
+    return(result)
 }

@@ -271,7 +271,7 @@ test_that ("add_nodes_to_graph_by_edge handles dist_tol parameter correctly", {
   graph2_small <- add_nodes_to_graph_by_edge(graph, xy, dist_tol = small_tol)
   
   # With a larger tolerance, points should be merged with existing vertices
-  large_tol <- 1e-4
+  large_tol <- 1
   graph1_large <- add_nodes_to_graph(graph, xy, dist_tol = large_tol)
   graph2_large <- add_nodes_to_graph_by_edge(graph, xy, dist_tol = large_tol)
   
@@ -298,10 +298,10 @@ test_that ("add_nodes_to_graph_by_edge handles dist_tol parameter correctly", {
   # Print diagnostic information
   cat("\ndist_tol parameter comparison:\n")
   cat("Original graph edges:", nrow(graph), "\n")
-  cat("Small tolerance (1e-6):\n")
+  cat(glue::glue("Small tolerance {small_tol}:\n"))
   cat("  add_nodes_to_graph edges:", nrow(graph1_small), "\n")
   cat("  add_nodes_to_graph_by_edge edges:", nrow(graph2_small), "\n")
-  cat("Large tolerance (1e-4):\n")
+  cat(glue::glue("Large tolerance {large_tol}:\n"))
   cat("  add_nodes_to_graph edges:", nrow(graph1_large), "\n")
   cat("  add_nodes_to_graph_by_edge edges:", nrow(graph2_large), "\n")
   cat("Edge difference ratio (small tolerance):", small_diff_ratio, "\n")

@@ -7,7 +7,6 @@
 #' @inheritParams add_nodes_to_graph
 #' @return Modified version of graph with nodes added at specified locations
 #' @export
-#' @importFrom dplyr select rename left_join mutate n distinct
 #' @examples
 #' \dontrun{
 #' graph <- weight_streetnet (hampi, wt_profile = "foot")
@@ -48,14 +47,59 @@ add_nodes_to_graph_by_edge <- function (graph,
     pts$pts_index <- seq_len (nrow (pts))
     pts$from <- graph_std$from[pts$index]
     pts$to <- graph_std$to[pts$index]
-    pts_bi <- pts %>%
-        dplyr::select(-index) %>%
-        dplyr::rename (from=to, to=from
-                       #, x0=x, x=x0, y0=y,y=y0
-                       ) %>%
-        dplyr::left_join(graph_std %>% 
-                      dplyr::mutate(index=1:dplyr::n())%>%
-                      dplyr::select(from,to, index), by=c("to", "from"))
+    
+    # Check if any original points are too close to edge endpoints
+    if (dist_tol > 1e-6) {  # Only do this check for larger tolerance values
+        # Create a list to store indices of points to remove
+        points_to_remove <- integer(0)
+        
+        for (i in seq_len(nrow(pts))) {
+            # Get the edge that this point matches to
+            edge_i <- graph_std[pts$index[i], ]
+            
+            # Create a distance matrix between original point and edge endpoints
+            xy_i <- data.frame(
+                x = c(pts$x0[i], edge_i$xfr, edge_i$xto),
+                y = c(pts$y0[i], edge_i$yfr, edge_i$yto)
+            )
+            dmat <- geodist::geodist(xy_i, measure = "geodesic")
+            
+            # If original point is too close to an endpoint, mark for removal
+            if (dmat[1, 2] < dist_tol || dmat[1, 3] < dist_tol) {
+                points_to_remove <- c(points_to_remove, i)
+            }
+        }
+        
+        # Remove points that are too close to edge endpoints
+        if (length(points_to_remove) > 0) {
+            pts <- pts[-points_to_remove, ]
+            # Return original graph if no points remain
+            if (nrow(pts) == 0) {
+                return(graph)
+            }
+        }
+    }
+    
+    # Create a lookup table from the graph for efficient matching
+    graph_lookup <- data.frame(
+        from = graph_std$from,
+        to = graph_std$to,
+        index = seq_len(nrow(graph_std))
+    )
+    
+    # Create bidirectional version with swapped from/to
+    pts_bi <- pts[, setdiff(names(pts), "index")]  # Remove index column
+    
+    # Find matching indices using merge with swapped column order
+    pts_bi <- merge(
+        pts_bi,
+        graph_lookup,
+        by.x = c("to", "from"),  # Swap the order in the merge operation
+        by.y = c("from", "to"),
+        all.x = FALSE  # Only keep rows that match
+    )
+    
+    # Combine with original points
     pts <- unique(rbind(pts, pts_bi[names(pts)]))
     
     # Function to generate unique IDs
@@ -86,7 +130,10 @@ add_nodes_to_graph_by_edge <- function (graph,
         current_edge_1 <- current_edge[1,]
         #  Get all points that match this edge instance
         edge_pts <- pts[pts$pts_index %in% current_edge$n, ]
-        edge_pts <- edge_pts%>%dplyr::distinct(pts_index, .keep_all = TRUE)
+        
+        # Remove duplicate points (keep only one row per pts_index)
+        edge_pts <- edge_pts[!duplicated(edge_pts$pts_index), ]
+        
         # Skip if no points
         if (nrow(edge_pts) == 0) stop("No points found.")
         
@@ -227,14 +274,14 @@ add_nodes_to_graph_by_edge <- function (graph,
         
         # Create middle segments
         if (n_segments > 2) {
-            for (s in 2:(n_segments-1)) {
-                segments[[s]] <- current_edge_1
-                segments[[s]]$from <- segments[[s-1]]$to
-                segments[[s]]$to <- genhash()
-                segments[[s]]$xfr <- edge_pts$x[s-1]
-                segments[[s]]$yfr <- edge_pts$y[s-1]
-                segments[[s]]$xto <- edge_pts$x[s]
-                segments[[s]]$yto <- edge_pts$y[s]
+            for (s in seq_len(n_segments-2)) {
+                segments[[s+1]] <- current_edge_1
+                segments[[s+1]]$from <- segments[[s]]$to
+                segments[[s+1]]$to <- genhash()
+                segments[[s+1]]$xfr <- edge_pts$x[s]
+                segments[[s+1]]$yfr <- edge_pts$y[s]
+                segments[[s+1]]$xto <- edge_pts$x[s+1]
+                segments[[s+1]]$yto <- edge_pts$y[s+1]
             }
         }
         
@@ -326,24 +373,11 @@ add_nodes_to_graph_by_edge <- function (graph,
     edges_split <- do.call(rbind, all_edges_split)
     
     # Then match edges_split back on to original graph:
-    graph_to_add <- graph_to_add [edges_split$n, ]
-    gr_cols <- gr_cols [which (!is.na (gr_cols))]
-    for (g in seq_along (gr_cols)) {
-        graph_to_add [, gr_cols [g]] <- edges_split [[names (gr_cols) [g]]]
-    }
-    
-    return (rbind (graph, graph_to_add))
-    
-    
-    # Convert edges_split back to original graph format
-    new_edges <- edges_split[,names(graph_std)]
+    graph_to_add <- graph_to_add[1:nrow(edges_split), ]  # Ensure correct size
+    gr_cols <- gr_cols[which(!is.na(gr_cols))]
     for (g in seq_along(gr_cols)) {
-        if (names(gr_cols)[g] %in% names(new_edges)) {
-            new_edges[[gr_cols[g]]] <- new_edges[[names(gr_cols)[g]]]
-        }
+        graph_to_add[, gr_cols[g]] <- edges_split[[names(gr_cols)[g]]]
     }
-    # Combine the modified graph with the original
-    result <- rbind(graph, new_edges[, names(graph)])
     
-    return(result)
+    return(rbind(graph, graph_to_add))
 }

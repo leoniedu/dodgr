@@ -1,3 +1,7 @@
+library(dplyr)
+library(glue)
+library(testthat)
+
 # test_all <- (identical (Sys.getenv ("MPADGE_LOCAL"), "true") ||
 #                identical (Sys.getenv ("GITHUB_JOB"), "test-coverage"))
 # 
@@ -29,7 +33,7 @@ test_that ("add_nodes_to_graph_by_edge single point per edge", {
 
   # Filter to keep only points that match to unique edges
   xy_single <- xy [pts$xy_index, ]
-  
+  xy_single <- xy_single[1,]
   # find bidirectional edges
   bi <- graph[pts$index,]%>%
     select(from_id=to_id, to_id=from_id, graph_index)%>%
@@ -38,11 +42,8 @@ test_that ("add_nodes_to_graph_by_edge single point per edge", {
   
   # Process with both functions
   graph1 <- add_nodes_to_graph (graph, xy_single, intersections_only = TRUE, dist_tol = 0)
-  # graph1%>%filter(graph_index%in%bi_index)
-  # graph2%>%filter(graph_index%in%bi_index)
   graph2 <- add_nodes_to_graph_by_edge (graph, xy_single, intersections_only = TRUE, dist_tol = 0)
   
-  # nrow(graph1)+nrow(xy_single)
   # Compare results
   expect_equal (nrow (graph1), nrow (graph2))
   
@@ -58,6 +59,36 @@ test_that ("add_nodes_to_graph_by_edge single point per edge", {
   verts1 <- unique (c (graph1$from, graph1$to))
   verts2 <- unique (c (graph2$from, graph2$to))
   expect_equal (length (verts1), length (verts2))
+  
+  
+  # Compare with edge to point creation
+  
+  graph <- graph%>%filter(highway=="residential")
+  
+  # Process with both functions
+  graph1 <- add_nodes_to_graph (graph, xy_single, intersections_only = FALSE, dist_tol = 0)
+  # graph1%>%filter(graph_index%in%bi_index)
+  # graph2%>%filter(graph_index%in%bi_index)
+  graph2 <- add_nodes_to_graph_by_edge (graph, xy_single, intersections_only = FALSE, dist_tol = 0)
+  expect_equal (sum(graph1$d), sum(graph2$d), tolerance = 1e-6)
+  expect_equal (sum(graph1$time), sum(graph2$time), tolerance = 1e-6)
+  expect_equal (sum(graph1$time_weighted), sum(graph2$time_weighted), tolerance = 1e-6)
+  expect_equal (sum(graph1$d_weighted), sum(graph2$d_weighted), tolerance = 1e-6)
+  
+  
+  
+  graph2 <- add_nodes_to_graph_by_edge (graph, xy_single, intersections_only = FALSE, dist_tol = 0, wt_profile = "foot", highway="residential")
+  expect_equal (sum(graph1$d), sum(graph2$d), tolerance = 1e-6)
+  expect_equal (sum(graph1$time), sum(graph2$time), tolerance = 1e-6)
+  expect_equal (sum(graph1$time_weighted), sum(graph2$time_weighted), tolerance = 1e-6)
+  expect_equal (sum(graph1$d_weighted), sum(graph2$d_weighted), tolerance = 1e-6)
+  
+  
+  
+  graph2 <- add_nodes_to_graph_by_edge (graph, xy_single, intersections_only = FALSE, dist_tol = 0, wt_profile = "motorcar", highway="residential")
+  expect_equal (sum(graph1$d), sum(graph2$d), tolerance = 1e-6)
+  expect_gt (sum(graph1$time), sum(graph2$time))
+  expect_gt (sum(graph1$time_weighted), sum(graph2$time_weighted))
 })
 
 test_that ("add_nodes_to_graph_by_edge multiple points per edge", {
@@ -306,4 +337,33 @@ test_that ("add_nodes_to_graph_by_edge handles dist_tol parameter correctly", {
   cat("  add_nodes_to_graph_by_edge edges:", nrow(graph2_large), "\n")
   cat("Edge difference ratio (small tolerance):", small_diff_ratio, "\n")
   cat("Edge difference ratio (large tolerance):", large_diff_ratio, "\n")
+})
+
+test_that("add_nodes_to_graph_by_edge maintains consistent coordinates by ID", {
+  
+  # Load a sample graph
+  graph <- weight_streetnet(hampi, wt_profile = "foot")
+  verts <- dodgr_vertices(graph)
+
+  # Create a set of points
+  set.seed(42)
+  npts <- 2
+  xy <- data.frame(
+    x = min(verts$x) + runif(npts) * diff(range(verts$x)),
+    y = min(verts$y) + runif(npts) * diff(range(verts$y))
+  )
+  
+  # Create custom IDs for the points
+  xy_id <- paste0("point_", seq_len(nrow(xy)))
+  
+  # Process with add_nodes_to_graph_by_edge using custom IDs
+  graph_with_nodes <- add_nodes_to_graph_by_edge(graph, xy, xy_id = xy_id)
+  
+  # Get coordinates for this ID
+  inconsistent_coords <- graph_with_nodes %>%
+    dplyr::reframe(id=c(from_id, to_id), lon=c(from_lon, to_lon), lat=c(from_lat, to_lat))%>%
+    distinct(id, lon, lat)%>%
+    count(id)%>%
+    filter(n>1)
+  expect_equal(nrow(inconsistent_coords),0)
 })

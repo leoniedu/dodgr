@@ -25,7 +25,7 @@
 #' }
 add_nodes_to_graph_by_edge <- function (graph,
                                         xy,
-                                        dist_tol = 1e-6, # Kept for backward compatibility but not used
+                                        dist_tol = 1e-6,
                                         intersections_only = FALSE,
                                         xy_id = NULL, 
                                         wt_profile = NULL,
@@ -34,16 +34,13 @@ add_nodes_to_graph_by_edge <- function (graph,
                                         max_distance = Inf,
                                         replace_component = TRUE) {
     
-    # Function to generate unique IDs
-    genhash <- function (len = 16L) {
-        paste0 (sample (c (0:9, letters, LETTERS), size = len, replace = TRUE), collapse = "")
+    genhash <- function (len = 10) {
+        paste0 (sample (c (0:9, letters, LETTERS), size = len), collapse = "")
     }
     genhashv <- Vectorize(genhash)
     
-    # Add x0 and y0 columns to xy
     xy <- pre_process_xy (xy)
     
-    # Standardize graph for calculations
     gr_cols <- dodgr_graph_cols (graph)
     gr_cols <- unlist (gr_cols [which (!is.na (gr_cols))])
     graph_std <- graph [, gr_cols] # standardise column names
@@ -52,18 +49,22 @@ add_nodes_to_graph_by_edge <- function (graph,
     # Match points to the standardized graph
     pts <- match_pts_to_graph (graph_std, xy, distances = TRUE)
     projids <- unique(pts[, c("x", "y")])  # Select distinct (x, y) pairs
-    projids$proj_id <- paste0("proj_", genhash(10), "_", seq_len(nrow(projids)))  # Generate proj_id
+    projids$proj_id <- paste0("proj_", genhash(), "_", seq_len(nrow(projids)))  # Generate proj_id
     pts <- merge(pts, projids)
+    
     if (is.null(xy_id)) {
         pts$xy_id <- genhashv(rep(10L, nrow(pts)))
     } else {
         pts$xy_id <- xy_id
     }
+    
     # Return original graph if no points match
     if (nrow (pts) == 0) {
         return (graph)
     }
+    
     graph$tmp_graph_index <- 1:nrow(graph)
+    
     # Add original coordinates to pts
     pts$x0 <- xy [, 1]
     pts$y0 <- xy [, 2]
@@ -73,7 +74,6 @@ add_nodes_to_graph_by_edge <- function (graph,
     
     # Check if any original points are too close to edge endpoints
     if (dist_tol > 1e-6) {  # Only do this check for larger tolerance values
-        # Create a list to store indices of points to remove
         points_to_remove <- integer(0)
         
         for (i in seq_len(nrow(pts))) {
@@ -119,12 +119,14 @@ add_nodes_to_graph_by_edge <- function (graph,
         pts_bi,
         by.y = c("to", "from"),  # Swap the order in the merge operation
         by.x = c("from", "to")
-        #, all.x = FALSE  # Only keep rows that match
     )
+    
     # Combine with original points
     pts <- unique(rbind(pts, pts_bi[names(pts)]))
+    
     # Extract edges that need to be split
     edges_to_split <- graph_std [pts$index, ]
+    
     # Add index for tracking
     edges_to_split$n <- pts$pts_index
     
@@ -137,18 +139,20 @@ add_nodes_to_graph_by_edge <- function (graph,
     # Group edges by edge_id
     unique_edges <- unique(edges_to_split$edge_id)
     all_edges_split <- list()
-
+    
     # Process each unique edge
     for (edge_id in unique_edges) {
         # Get all instances of this edge
         current_edge <- edges_to_split[edges_to_split$edge_id == edge_id, ]
         current_edge_1 <- current_edge[1,]
+        
         #  Get all points that match this edge instance
         edge_pts <- pts[pts$pts_index %in% current_edge$n, ]
         edge_pts <- edge_pts[!duplicated(edge_pts$proj_id), ]
         
         # stop if no points
         if (nrow(edge_pts) == 0) stop("No points found.")
+        
         # Store the original ratios - these will be used directly
         orig_d_weighted <- current_edge_1$d_weighted
         orig_d <- current_edge_1$d
@@ -186,7 +190,7 @@ add_nodes_to_graph_by_edge <- function (graph,
             for (p in seq_len(nrow(edge_pts))) {
                 # Create edges to original point (bidirectional)
                 new_edges <- rbind(current_edge_1, current_edge_1)
-                ## HERE
+                
                 # Set up connection to original point
                 new_edges$from[1] <- new_edges$to[2] <-  edge_pts$xy_id[p]
                 new_edges$to[1] <- new_edges$from[2] <- edge_pts$proj_id[p]
@@ -194,7 +198,7 @@ add_nodes_to_graph_by_edge <- function (graph,
                 new_edges$yfr[1] <- new_edges$yto[2] <- edge_pts$y0[p]
                 new_edges$xto[1] <- new_edges$xfr[2] <- edge_pts$x[p]
                 new_edges$yto[1] <- new_edges$yfr[2] <- edge_pts$y[p]
-
+                
                 # Calculate distance using geodesic distance
                 d_i <- geodist::geodist(
                     data.frame(
@@ -242,8 +246,8 @@ add_nodes_to_graph_by_edge <- function (graph,
                 
                 # Generate unique edge IDs
                 new_edges$edge_id <- c(
-                    paste0("to_orig_", p, "_", genhash(5)),
-                    paste0("from_orig_", p, "_", genhash(5))
+                    paste0("to_orig_", p, "_", genhash()),
+                    paste0("from_orig_", p, "_", genhash())
                 )
                 
                 # Add to all segments
@@ -273,7 +277,6 @@ add_nodes_to_graph_by_edge <- function (graph,
                 segments[[s+1]]$yfr <- edge_pts$y[s]
                 segments[[s+1]]$xto <- edge_pts$x[s+1]
                 segments[[s+1]]$yto <- edge_pts$y[s+1]
-                
             }
         }
         
@@ -324,7 +327,7 @@ add_nodes_to_graph_by_edge <- function (graph,
     graph_to_add <- graph_to_add[edges_split$n, ]
     gr_cols <- gr_cols[which(!is.na(gr_cols))]
     for (g in seq_along(gr_cols)) {
-        graph_to_add[, gr_cols[g]] <- edges_split[[names(gr_cols)[g]]]
+        graph_to_add [, gr_cols[g]] <- edges_split [[names(gr_cols)[g]]]
     }
     graph_to_add[, "highway"] <- edges_split[["highway"]]
     

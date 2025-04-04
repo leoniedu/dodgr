@@ -59,10 +59,6 @@ add_nodes_to_graph_by_edge <- function (graph,
         pts$xy_id <- xy_id
     }
     
-    # Return original graph if no points match
-    if (nrow (pts) == 0) {
-        return (graph)
-    }
     
     graph$tmp_graph_index <- 1:nrow (graph)
     
@@ -91,9 +87,14 @@ add_nodes_to_graph_by_edge <- function (graph,
         by.y = c ("to", "from"),  # Swap the order in the merge operation
         by.x = c ("from", "to")
     )
-    
+
     # Combine with original points
     pts <- unique (rbind (pts, pts_bi [names (pts)]))
+    pts <- pts[abs(pts$d_signed)<=max_distance,]                # Skip pts if distance exceeds maximum allowed
+    # Return original graph if no points match
+    if (nrow (pts) == 0) {
+        return (graph)
+    }
     
     # Extract edges that need to be split
     edges_to_split <- graph_std [pts$index, ]
@@ -191,11 +192,6 @@ add_nodes_to_graph_by_edge <- function (graph,
                     next
                 }
                 
-                # Skip if distance exceeds maximum allowed
-                if (d_i > max_distance) {
-                    next  
-                }
-                
                 # Apply custom weight profile if provided
                 if (!is.null (wt_profile) || !is.null (wt_profile_file)) {
                     # Get weight profile
@@ -252,7 +248,7 @@ add_nodes_to_graph_by_edge <- function (graph,
             for (s in seq_len (n_segments - 2)) {
                 segments [[s + 1]] <- current_edge_1
                 segments [[s + 1]]$from <- segments [[s]]$to
-                segments [[s + 1]]$to <- edge_pts$proj_id [s]
+                segments [[s + 1]]$to <- edge_pts$proj_id [s+1]
                 segments [[s + 1]]$xfr <- edge_pts$x [s]
                 segments [[s + 1]]$yfr <- edge_pts$y [s]
                 segments [[s + 1]]$xto <- edge_pts$x [s + 1]
@@ -287,7 +283,7 @@ add_nodes_to_graph_by_edge <- function (graph,
             
             # Update edge_id to make it unique
             segments [[s]]$edge_id <- paste0 (segments [[s]]$edge_id, "_", LETTERS [s])
-            segments [[s]]$highway <- unique (graph_to_add [graph_to_add$tmp_graph_index == edge_pts$index [1], "highway"])
+            segments [[s]]$highway <- unlist(unique (graph_to_add [graph_to_add$tmp_graph_index == edge_pts$index [1], "highway"]))
         }
         
         # Combine all segments
@@ -303,7 +299,7 @@ add_nodes_to_graph_by_edge <- function (graph,
     }
     
     edges_split <- do.call (rbind, all_edges_split)
-    
+
     # Then match edges_split back on to original graph:
     graph_to_add <- graph_to_add [edges_split$n, ]
     gr_cols <- gr_cols [which (!is.na (gr_cols))]

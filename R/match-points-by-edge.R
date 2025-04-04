@@ -48,8 +48,8 @@ add_nodes_to_graph_by_edge <- function (graph,
     
     # Match points to the standardized graph
     pts <- match_pts_to_graph (graph_std, xy, distances = TRUE)
-    projids <- unique(pts[, c("x", "y")])  # Select distinct (x, y) pairs
-    projids$proj_id <- paste0("proj_", genhash(), "_", seq_len(nrow(projids)))  # Generate proj_id
+    projids <- unique(pts[, c("x", "y")])  
+    projids$proj_id <- paste0("proj_", genhash(), "_", seq_len(nrow(projids)))  
     pts <- merge(pts, projids)
     
     if (is.null(xy_id)) {
@@ -72,36 +72,6 @@ add_nodes_to_graph_by_edge <- function (graph,
     pts$from <- graph_std$from[pts$index]
     pts$to <- graph_std$to[pts$index]
     
-    # Check if any original points are too close to edge endpoints
-    if (dist_tol > 1e-6) {  # Only do this check for larger tolerance values
-        points_to_remove <- integer(0)
-        
-        for (i in seq_len(nrow(pts))) {
-            # Get the edge that this point matches to
-            edge_i <- graph_std[pts$index[i], ]
-            
-            # Create a distance matrix between original point and edge endpoints
-            xy_i <- data.frame(
-                x = c(pts$x0[i], edge_i$xfr, edge_i$xto),
-                y = c(pts$y0[i], edge_i$yfr, edge_i$yto)
-            )
-            dmat <- geodist::geodist(xy_i, measure = "geodesic")
-            
-            # If original point is too close to an endpoint, mark for removal
-            if (dmat[1, 2] < dist_tol || dmat[1, 3] < dist_tol) {
-                points_to_remove <- c(points_to_remove, i)
-            }
-        }
-        
-        # Remove points that are too close to edge endpoints
-        if (length(points_to_remove) > 0) {
-            pts <- pts[-points_to_remove, ]
-            # Return original graph if no points remain
-            if (nrow(pts) == 0) {
-                return(graph)
-            }
-        }
-    }
     
     # Create a lookup table from the graph for efficient matching
     graph_lookup <- data.frame(
@@ -180,6 +150,9 @@ add_nodes_to_graph_by_edge <- function (graph,
         sorted_indices <- order(proj_distances)
         edge_pts <- edge_pts[sorted_indices, ]
         proj_distances <- proj_distances[sorted_indices]
+        proj_ok <- which(proj_distances>dist_tol)
+        if (length(proj_ok)==0) proj_ok <- 1
+        edge_pts <- edge_pts[proj_ok,]
         
         # Process all points normally without special handling for close points
         # Create segments for each point
@@ -208,12 +181,12 @@ add_nodes_to_graph_by_edge <- function (graph,
                     measure = "geodesic"
                 )[1, 2]
                 
-                # Ensure no zero distances
-                if (d_i < 1e-9) d_i <- 1e-9
+                # Skip if distance smaller than dist_tol
+                if (d_i < dist_tol) next
                 
-                # Check if distance exceeds maximum allowed
+                # Skip if distance exceeds maximum allowed
                 if (d_i > max_distance) {
-                    next  # Skip this connection
+                    next  
                 }
                 
                 # Apply custom weight profile if provided
@@ -296,8 +269,8 @@ add_nodes_to_graph_by_edge <- function (graph,
             segment_dist <- geodist::geodist(segment_xy, measure = "geodesic")[1, 2]
             
             # Ensure no zero distances (use a small value if distance is zero)
-            if (segment_dist < 1e-9) segment_dist <- 1e-9
-            
+            # if (segment_dist < 1e-9) segment_dist <- 1e-9
+
             # Update segment properties - preserve weight ratios exactly
             segments[[s]]$d <- segment_dist
             segments[[s]]$d_weighted <- segment_dist * orig_ratio

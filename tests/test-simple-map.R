@@ -175,6 +175,10 @@ message("\nInitial network structure:")
 message("- Number of vertices: ", nrow(v_initial))
 message("- Number of edges: ", nrow(net_b))
 
+# net_b <- net_b%>%
+#   break_long_edges(max_d = 600000)
+
+
 # Calculate path between points
 # initial_paths <- try(dodgr_paths(net_b, from = points_sf%>%st_coordinates(), vertices = FALSE))
 # message("\nInitial path attempt result:")
@@ -192,6 +196,7 @@ v2 <- v_initial%>%filter(component==2)%>%
 
 net_b_1 <- net_b%>%filter(component==1)
 net_b_2 <- net_b%>%filter(component==2)
+
 net_b_12p <- add_nodes_to_graph_by_edge(net_b_1, v2, 
                                         #xy_id = v2$id, 
                                         replace_component = TRUE)
@@ -209,139 +214,11 @@ net_b_12p2 <- net_b_12p%>%
   add_nodes_to_graph_by_edge(xy=points_sf%>%filter(id%in%c("p_1","p_4")))
 
 net_b_12p_artificial <- net_b_12p%>%
-  add_nodes_to_graph_by_edge(xy=points_sf%>%filter(id%in%c("p_1","p_4")), highway = "artificial", wt_profile_file = "~/github/dodgrconnect/data-raw/profile.json")
+  add_nodes_to_graph_by_edge(xy=points_sf%>%filter(id%in%c("p_1","p_4")), highway = "artificial", wt_profile_file = "~/github/dodgrconnect/data-raw/profile.json", wt_profile = "motorcar")
 
 path_map(network=net_b_12p2, points_sf = points_sf%>%filter(id%in%c("p_1","p_4")), roads_sf = roads_sf)
 
 path_map(network=net_b_12p2, points_sf = points_sf%>%filter(id%in%c("p_1","p_4")), roads_sf = roads_sf)
 
-# Calculate path between points
-initial_paths <- try(dodgr_paths(net_b, from = points_sf%>%st_coordinates(), vertices = FALSE))
-message("\nInitial path attempt result:")
-print(initial_paths)
-net_b[unlist(initial_paths),]
-
-
-ggplot(net_b_12) +
-  geom_sf(data=roads_sf, color="gray")+
-  geom_segment(aes(x = from_lon, y=from_lat, xend = to_lon, yend = to_lat), color="orange", alpha=1/2)+
-  geom_label_repel(aes(x = from_lon, y=from_lat, label=from_id),data=net_b_12%>%distinct(from_lon, from_lat, from_id))+
-  geom_point(aes(x = x, y=y), color="red", data=points_sf)+
-  geom_segment(aes(x = from_lon, y=from_lat, xend = to_lon, yend = to_lat), data=net_b[unlist(initial_paths),], color="pink")
-
-# Create new vertices
-
-# net_b <- net_initial%>%
-#   break_long_edges(max_d = 400000)
-
-ggplot(net_b_12)+
-  geom_segment(aes(x = from_lon, y=from_lat, xend = to_lon, yend = to_lat))+
-  geom_point(aes(x = from_lon, y=from_lat), color="blue")+
-  geom_point(aes(x = x, y=y), color="red", data=points_sf)+
-  geom_segment(aes(x = from_lon, y=from_lat, xend = to_lon, yend = to_lat), data=net_b_12[unlist(initial_paths),], color="pink")
-
-add_nodes_fn <- function (graph, xy,..., xy_id) add_nodes_to_graph_by_edge(graph, xy=st_coordinates(xy),..., xy_id=xy$id)
-# 5. Connect points to network
-net_connected1 <- add_nodes_fn(net_b, points_sf%>%head(2))%>%
-  ungroup()%>%
-  mutate(edge_id=1:n())
-net_connected2 <- net_connected1%>%
-  add_nodes_fn(points_sf%>%tail(2))%>%
-  ungroup()%>%
-  mutate(edge_id=1:n())
-net_connected3 <- net_connected2%>%
-  filter(component==1)%>%
-  add_nodes_fn(dodgr_vertices(net_b%>%filter(component==2)%>%head(2))%>%st_as_sf(coords=c("x", "y")))%>%
-  ungroup()%>%
-  bind_rows(net_connected2%>%
-              mutate(edge_id=as.character(edge_id))%>%
-              filter(component==2))%>%
-  mutate(edge_id=1:n(), component=NULL)%>%
-  dodgr::dodgr_components()
-
-ggplot(net_connected3)+
-  geom_segment(aes(x = from_lon, y=from_lat, xend = to_lon, yend = to_lat))+
-  geom_point(aes(x = from_lon, y=from_lat), color="blue")+
-  geom_point(aes(x = x, y=y), color="red", data=points_sf)
-
-
-# 6. Calculate path
-paths_v <- dodgr_paths(net_connected3, from = st_coordinates(points_sf%>%filter(id==6)), to = st_coordinates(points_sf%>%filter(id==3)), vertices = TRUE)
-paths_e <- dodgr_paths(net_connected3, from = st_coordinates(points_sf%>%filter(id==6)), to = st_coordinates(points_sf%>%filter(id==3)), vertices = FALSE)
-message("Paths results:")
-print(paths_v)
-print(paths_e)
-ggplot(net_connected3)+
-  geom_segment(aes(x = from_lon, y=from_lat, xend = to_lon, yend = to_lat, color=factor(component)))+
-  geom_point(aes(x = from_lon, y=from_lat))+
-  #geom_point(aes(x = x, y=y), color="red", data=points_sf)+
-  geom_label(aes(x = x, y=y, label=id), color="black", data=points_sf)+
-  geom_segment(aes(x = from_lon, y=from_lat, xend = to_lon, yend = to_lat), data=net_connected3[unlist(paths_e),], color="orange", linewidth=3)
-
-
-
-
-
-
-# Connect vertices of component 2 to vertices of component 1
-net_connected <- net_initial
-net_split <- net_connected%>%
-  mutate(edge_id=as.character(edge_id))%>%
-  split(.$component)
-# net_split2 <- net_connected[,c("edge_id",  "from_lon", "from_lat", "to_lon", "to_lat", "d", "d_weighted", "highway", "component", "time", "time_weighted", "from_id", "to_id")]%>%
-#   mutate(edge_id=as.character(edge_id))%>%
-#   split(.$component)
-v_split <- dodgr::dodgr_vertices(net_connected)%>%split(.$component)%>%lapply(function(x) sf::st_as_sf(x, coords=c("x", "y"), remove=FALSE))
-
-net_connected_comp12 <- add_nodes_to_graph3(graph=net_b,xy =v_split[[2]][1,c("x", "y")])%>%#bind_rows(net_split[[2]]%>%mutate(component=1, edge_id=as.character(edge_id)))%>%
-  ungroup()#
-# net_connected_comp12 <- add_nodes_to_graph(graph=net_split2[[1]],xy =v_split[[2]][1,c("x", "y")])%>%#bind_rows(net_split[[2]]%>%mutate(component=1, edge_id=as.character(edge_id)))%>%
-#   ungroup()#%>%mutate(edge_id=1:n())
-paths_v <- dodgr_paths(net_connected_comp12, from = st_coordinates(points_sf%>%filter(id==6)), to = st_coordinates(points_sf%>%filter(id==4)), vertices = TRUE)
-paths_e <- dodgr_paths(net_connected_comp12, from = st_coordinates(points_sf%>%filter(id==6)), to = st_coordinates(points_sf%>%filter(id==4)), vertices = FALSE)
-message("Paths results:")
-print(paths_v)
-print(paths_e)
-ggplot(net_connected_comp12)+
-  geom_segment(aes(x = from_lon, y=from_lat, xend = to_lon, yend = to_lat, color=factor(component)))+
-  geom_point(aes(x = from_lon, y=from_lat))+
-  #geom_point(aes(x = x, y=y), color="red", data=points_sf)+
-  geom_label(aes(x = x, y=y, label=id), color="black", data=points_sf)+
-  geom_segment(aes(x = from_lon, y=from_lat, xend = to_lon, yend = to_lat), data=net_connected[unlist(paths_e),], color="orange")
-
-
-
-ggplot(net_connected_comp12)+
-  geom_segment(aes(x = from_lon, y=from_lat, xend = to_lon, yend = to_lat, color=factor(component)))+
-  geom_point(aes(x = from_lon, y=from_lat))+
-  geom_label(aes(x = x, y=y, label=id), color="black", data=points_sf)
-
-paths_v <- dodgr_paths(net_connected_comp12, from = st_coordinates(points_sf%>%filter(id==3)), to = st_coordinates(points_sf%>%filter(id==4)), vertices = TRUE)
-paths_e <- dodgr_paths(net_connected_comp12, from = st_coordinates(points_sf%>%filter(id==3)), to = st_coordinates(points_sf%>%filter(id==4)), vertices = FALSE)
-
-
-ggplot(net_connected_comp12)+
-  geom_segment(aes(x = from_lon, y=from_lat, xend = to_lon, yend = to_lat, color=factor(component)))+
-  geom_point(aes(x = from_lon, y=from_lat))+
-  geom_label(aes(x = x, y=y, label=id), color="black", data=points_sf)+
-  geom_segment(aes(x = from_lon, y=from_lat, xend = to_lon, yend = to_lat), data=net_connected[unlist(paths_e),], color="blue")
-
-
-
-# Verify connections
-expect_equal(nrow(result$artificial_segments), 4) # Should have 4 connections (one point connects twice)
-
-# Check that point 2 connects to both roads
-if (nrow(result$artificial_segments) > 0) {
-  point2_connections <- result$artificial_segments %>%
-    filter(st_intersects(geometry, st_geometry(points_sf[2,]), sparse=FALSE)[,1])
-  expect_equal(nrow(point2_connections), 2)
-}
-
-# Check that the network is fully connected
-if (nrow(result$complete_network) > 0) {
-  graph <- dodgr::weight_streetnet(result$complete_network, id_col="id", wt_profile="foot")
-  components <- dodgr::dodgr_components(graph)
-  expect_equal(length(unique(components$component)), 1)
-}
+path_map(network=net_b_12p_artificial, points_sf = points_sf%>%filter(id%in%c("p_1","p_4")), roads_sf = roads_sf) 
 

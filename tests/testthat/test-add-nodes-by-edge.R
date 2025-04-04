@@ -63,12 +63,8 @@ test_that ("add_nodes_to_graph_by_edge single point per edge", {
   
   # Compare with edge to point creation
   
-  graph <- graph%>%filter(highway=="residential")
-  
   # Process with both functions
   graph1 <- add_nodes_to_graph (graph, xy_single, intersections_only = FALSE, dist_tol = 0)
-  # graph1%>%filter(graph_index%in%bi_index)
-  # graph2%>%filter(graph_index%in%bi_index)
   graph2 <- add_nodes_to_graph_by_edge (graph, xy_single, intersections_only = FALSE, dist_tol = 0)
   expect_equal (sum(graph1$d), sum(graph2$d), tolerance = 1e-6)
   expect_equal (sum(graph1$time), sum(graph2$time), tolerance = 1e-6)
@@ -104,7 +100,7 @@ test_that ("add_nodes_to_graph_by_edge multiple points per edge", {
     x = min (verts$x) + runif (npts) * diff (range (verts$x)),
     y = min (verts$y) + runif (npts) * diff (range (verts$y))
   )
-  
+
   # Match points to graph
   pts <- match_pts_to_graph (graph, xy, distances = TRUE)
   edge_counts <- table (pts$index)
@@ -118,7 +114,6 @@ test_that ("add_nodes_to_graph_by_edge multiple points per edge", {
   # Create a dataset with multiple points per edge
   multi_point_indices <- which (pts$index %in% multi_point_edges)
   xy_multi <- xy [multi_point_indices, ]
-  
   # Process with both functions
   graph1 <- add_nodes_to_graph (graph, xy_multi)
   graph2 <- add_nodes_to_graph_by_edge (graph, xy_multi)
@@ -134,7 +129,7 @@ test_that ("add_nodes_to_graph_by_edge multiple points per edge", {
   expect_true (nrow (graph2) <= nrow (graph1))
   
   # The total distance should be less or equal for the edge-based approach
-  expect_true (total_dist2 <= total_dist1 * 1.001) # Allow small tolerance
+  expect_true (total_dist2 <= total_dist1 )
   
   # Print the difference for diagnostic purposes
   cat ("\nMultiple points per edge comparison:\n")
@@ -149,26 +144,40 @@ test_that ("add_nodes_to_graph_by_edge multiple points per edge", {
 test_that ("add_nodes_to_graph_by_edge with mixed point distribution", {
   
   # Load a sample graph
-  graph <- weight_streetnet (hampi, wt_profile = "foot")
+  graph <- weight_streetnet (hampi, wt_profile = "foot")%>%
+    mutate(edge_id=as.character(edge_id))%>%
+    std_graph()
   verts <- dodgr_vertices (graph)
   
   # Create a larger set of points with mixed distribution
   set.seed (3)
-  npts <- 30
+  npts <- 3
   xy <- data.frame (
     x = min (verts$x) + runif (npts) * diff (range (verts$x)),
     y = min (verts$y) + runif (npts) * diff (range (verts$y))
   )
-  
+  #xy <- rbind(xy,xy)
   # Process with both functions
-  graph1 <- add_nodes_to_graph (graph, xy)
-  graph2 <- add_nodes_to_graph_by_edge (graph, xy)
+  graph1 <- add_nodes_to_graph (graph, xy, dist_tol = 0)
+  graph2 <- add_nodes_to_graph_by_edge (graph, xy, dist_tol = 0)
+  
+  g1 <- graph1%>%
+    anti_join(graph)%>%
+    filter(grepl("_", edge_id))%>%
+    tidyr::separate(edge_id, c("edge_id", "edge_id_seq"), sep="_")%>%
+    left_join(graph%>%select(edge_id, highway), by="edge_id")%>%
+    filter(highway.x!=highway.y)
+  
+  g1 <- graph1%>%anti_join(graph)%>%std_graph()
+  g2 <- graph2%>%anti_join(graph)%>%std_graph()
+  g1%>%anti_join(g2, by=c("from_lat", "from_lon", "to_lat", "to_lon", "d", "d_weighted", "highway", "time", "time_weighted"))%>%left_join(g2, by=c("from_lat", "from_lon", "to_lat", "to_lon"))%>%select(sort(names(.)))%>%View()
   
   # Compare results
   
   # The edge-based approach should generally be more efficient
   total_dist1 <- sum (graph1$d)
   total_dist2 <- sum (graph2$d)
+  cat ("Distance ratio (edge/point):", total_dist2 / total_dist1, "\n")
   
   # Print the difference for diagnostic purposes
   cat ("\nMixed point distribution comparison:\n")

@@ -99,24 +99,12 @@ dodgr_streetnet <- function (bbox,
 dodgr_streetnet_sc <- function (bbox,
                                 pts = NULL,
                                 expand = 0.05,
-                                quiet = TRUE) {
+                                quiet = TRUE, fts=c("highway", "restriction", "access", "bicycle", "foot", "motorcar", "motor_vehicle", "vehicle", "toll")) {
 
     bb <- process_bbox (bbox, pts, expand)
-
+    fts <- dQuote(fts,FALSE)
     # This extracts only some of the most common restrictions; see full list at
     # https://wiki.openstreetmap.org/wiki/Restrictions
-    fts <- c (
-        "\"highway\"",
-        "\"restriction\"",
-        "\"access\"",
-        "\"bicycle\"",
-        "\"foot\"",
-        "\"motorcar\"",
-        "\"motor_vehicle\"",
-        "\"vehicle\"",
-        "\"toll\""
-    )
-
     osmdata::opq (bb$bbox) %>%
         osmdata::add_osm_features (features = fts) %>%
         osmdata::osmdata_sc (quiet = quiet)

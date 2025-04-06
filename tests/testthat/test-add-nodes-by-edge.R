@@ -15,7 +15,7 @@ test_that ("add_nodes_to_graph_by_edge single point per edge", {
   
   # Load a sample graph
   graph <- weight_streetnet (hampi, wt_profile = "foot")%>%
-    mutate(graph_index=1:n())
+    mutate(graph_index=1:n(), edge_id=as.character(edge_id))
   verts <- dodgr_vertices (graph)
   
   # Create a small set of points that will likely match to different edges

@@ -35,6 +35,8 @@ add_nodes_to_graph_by_edge <- function (graph,
                                         max_distance = Inf,
                                         replace_component = TRUE) {
     
+    measure <- get_geodist_measure (graph)
+    
     genhash <- function (len = 10) {
         paste0 (sample (c (0:9, letters, LETTERS), size = len), collapse = "")
     }
@@ -87,7 +89,7 @@ add_nodes_to_graph_by_edge <- function (graph,
         by.y = c ("to", "from"),  # Swap the order in the merge operation
         by.x = c ("from", "to")
     )
-
+    
     # Combine with original points
     pts <- unique (rbind (pts, pts_bi [names (pts)]))
     pts <- pts[abs(pts$d_signed)<=max_distance,]                # Skip pts if distance exceeds maximum allowed
@@ -178,13 +180,13 @@ add_nodes_to_graph_by_edge <- function (graph,
                 new_edges$xto [1] <- new_edges$xfr [2] <- edge_pts$x [p]
                 new_edges$yto [1] <- new_edges$yfr [2] <- edge_pts$y [p]
                 
-                # Calculate distance using geodesic distance
+                # Calculate distance 
                 d_i <- geodist::geodist (
                     data.frame (
                         x = c (new_edges$xfr [1], new_edges$xto [1]),
                         y = c (new_edges$yfr [1], new_edges$yto [1])
                     ),
-                    measure = "geodesic"
+                    measure = measure
                 ) [1, 2]
                 
                 # Skip if distance smaller than dist_tol
@@ -195,7 +197,7 @@ add_nodes_to_graph_by_edge <- function (graph,
                 # Apply custom weight profile if provided
                 if (!is.null (wt_profile) || !is.null (wt_profile_file)) {
                     # Get weight profile
-                    wp <- dodgr:::get_profile (wt_profile = wt_profile, file = wt_profile_file)
+                    wp <- get_profile (wt_profile = wt_profile, file = wt_profile_file)
                     way_wt <- wp$value [wp$way == highway]
                     
                     if (length (way_wt) == 0) {
@@ -207,9 +209,9 @@ add_nodes_to_graph_by_edge <- function (graph,
                     new_edges$d_weighted <- d_i / way_wt
                     new_edges$highway <- highway
                     # Apply additional weighting functions
-                    new_edges <- dodgr:::set_maxspeed (new_edges, wt_profile, wt_profile_file) |>
-                        dodgr:::weight_by_num_lanes (wt_profile) |>
-                        dodgr:::calc_edge_time (wt_profile)
+                    new_edges <- set_maxspeed (new_edges, wt_profile, wt_profile_file) |>
+                        weight_by_num_lanes (wt_profile) |>
+                        calc_edge_time (wt_profile)
                     
                 } else {
                     # Use original edge's weight ratios
@@ -268,12 +270,12 @@ add_nodes_to_graph_by_edge <- function (graph,
         
         # Calculate distances and update weights for each segment
         for (s in seq_len (n_segments)) {
-            # Calculate distance for this segment using geodesic distance
+            # Calculate distance for this segment
             segment_xy <- data.frame (
                 x = c (segments [[s]]$xfr, segments [[s]]$xto),
                 y = c (segments [[s]]$yfr, segments [[s]]$yto)
             )
-            segment_dist <- geodist::geodist (segment_xy, measure = "geodesic") [1, 2]
+            segment_dist <- geodist::geodist (segment_xy, measure = measure) [1, 2]
             
             # Update segment properties - preserve weight ratios exactly
             segments [[s]]$d <- segment_dist
@@ -299,7 +301,7 @@ add_nodes_to_graph_by_edge <- function (graph,
     }
     
     edges_split <- do.call (rbind, all_edges_split)
-
+    
     # Then match edges_split back on to original graph:
     graph_to_add <- graph_to_add [edges_split$n, ]
     gr_cols <- gr_cols [which (!is.na (gr_cols))]
@@ -314,7 +316,7 @@ add_nodes_to_graph_by_edge <- function (graph,
     # Update component IDs if requested
     if (replace_component) {
         result_graph$component <- NULL
-        result_graph <- dodgr::dodgr_components (result_graph)
+        result_graph <- dodgr_components (result_graph)
     }
     result_graph$tmp_graph_index <- NULL
     return (result_graph)

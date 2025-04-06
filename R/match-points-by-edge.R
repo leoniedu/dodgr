@@ -51,22 +51,24 @@ add_nodes_to_graph_by_edge <- function (graph,
     
     # Match points to the standardized graph
     pts <- match_pts_to_graph (graph_std, xy, distances = TRUE)
-    projids <- unique (pts [, c ("x", "y")])  
-    projids$proj_id <- paste0 ("proj_", genhash (), "_", seq_len (nrow (projids)))  
-    pts <- merge (pts, projids)
+    
+    # Add original coordinates to pts
+    pts$x0 <- xy [, 1]
+    pts$y0 <- xy [, 2]
     
     if (is.null (xy_id)) {
         pts$xy_id <- genhashv (rep (10L, nrow (pts)))
     } else {
         pts$xy_id <- xy_id
     }
+    projids <- unique (pts [, c ("x", "y")])  
+    projids$proj_id <- paste0 ("proj_", genhash (), "_", seq_len (nrow (projids)))  
+    pts <- merge (pts, projids)
+    
     
     
     graph$tmp_graph_index <- 1:nrow (graph)
     
-    # Add original coordinates to pts
-    pts$x0 <- xy [, 1]
-    pts$y0 <- xy [, 2]
     pts$pts_index <- seq_len (nrow (pts))
     pts$from <- graph_std$from [pts$index]
     pts$to <- graph_std$to [pts$index]

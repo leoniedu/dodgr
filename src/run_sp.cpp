@@ -1,3 +1,4 @@
+
 #include "run_sp.h"
 
 #include "dgraph.h"
@@ -67,7 +68,6 @@ struct OneDist : public RcppParallel::Worker
     const std::shared_ptr <DGraph> g;
     const std::string heap_type;
     bool is_spatial;
-    bool return_weighted;
 
     RcppParallel::RMatrix <double> dout;
 
@@ -81,12 +81,10 @@ struct OneDist : public RcppParallel::Worker
             const std::shared_ptr <DGraph> g_in,
             const std::string & heap_type_in,
             const bool & is_spatial_in,
-            const bool & return_weighted_in,
             RcppParallel::RMatrix <double> dout_in) :
         dp_fromi (fromi), toi (toi_in), nverts (nverts_in),
         vx (vx_in), vy (vy_in),
         g (g_in), heap_type (heap_type_in), is_spatial (is_spatial_in),
-        return_weighted (return_weighted_in),
         dout (dout_in)
     {
     }
@@ -125,7 +123,7 @@ struct OneDist : public RcppParallel::Worker
             {
                 if (w [toi [j]] < INFINITE_DOUBLE)
                 {
-                    dout (i, j) = return_weighted ? w [toi [j]] : d [toi [j]];
+                    dout (i, j) = d [toi [j]];
                 }
             }
         }
@@ -141,7 +139,6 @@ struct OneDistNearest : public RcppParallel::Worker
     const size_t nfrom;
     const std::shared_ptr <DGraph> g;
     const std::string heap_type;
-    bool return_weighted;
 
     RcppParallel::RVector <double> dout;
 
@@ -153,11 +150,10 @@ struct OneDistNearest : public RcppParallel::Worker
             const size_t nfrom_in,
             const std::shared_ptr <DGraph> g_in,
             const std::string & heap_type_in,
-            const bool & return_weighted_in,
             RcppParallel::RVector <double> dout_in) :
         dp_fromi (fromi), toi (toi_in),
         nverts (nverts_in), nfrom (nfrom_in),
-        g (g_in), heap_type (heap_type_in), return_weighted (return_weighted_in),
+        g (g_in), heap_type (heap_type_in),
         dout (dout_in)
     {
     }
@@ -182,7 +178,7 @@ struct OneDistNearest : public RcppParallel::Worker
             {
                 if (w [toi [j]] < INFINITE_DOUBLE)
                 {
-                    dout [i] = return_weighted ? w [toi [j]] : d [toi [j]];
+                    dout [i] = d [toi [j]];
                     dout [i + nfrom] = toi [j];
                 }
             }
@@ -409,8 +405,7 @@ Rcpp::NumericMatrix rcpp_get_sp_dists_par (const Rcpp::DataFrame graph,
         Rcpp::IntegerVector fromi,
         Rcpp::IntegerVector toi_in,
         const std::string& heap_type,
-        const bool is_spatial,
-        const bool return_weighted)
+        const bool is_spatial)
 {
     std::vector <size_t> toi =
         Rcpp::as <std::vector <size_t> > ( toi_in);
@@ -447,7 +442,7 @@ Rcpp::NumericMatrix rcpp_get_sp_dists_par (const Rcpp::DataFrame graph,
 
     // Create parallel worker
     OneDist one_dist (RcppParallel::RVector <int> (fromi), toi,
-            nverts, vx, vy, g, heap_type, is_spatial, return_weighted,
+            nverts, vx, vy, g, heap_type, is_spatial,
             RcppParallel::RMatrix <double> (dout));
 
     size_t chunk_size = run_sp::get_chunk_size (nfrom);
@@ -464,11 +459,10 @@ Rcpp::NumericVector rcpp_get_sp_dists_nearest (const Rcpp::DataFrame graph,
         const Rcpp::DataFrame vert_map_in,
         Rcpp::IntegerVector fromi,
         Rcpp::IntegerVector toi_in,
-        const std::string& heap_type,
-        const bool return_weighted)
+        const std::string& heap_type)
 {
     std::vector <size_t> toi =
-        Rcpp::as <std::vector <size_t> > ( toi_in);
+        Rcpp::as <std::vector <size_t> > (toi_in);
 
     size_t nfrom = static_cast <size_t> (fromi.size ());
 
@@ -492,7 +486,7 @@ Rcpp::NumericVector rcpp_get_sp_dists_nearest (const Rcpp::DataFrame graph,
 
     // Create parallel worker
     OneDistNearest one_dist (RcppParallel::RVector <int> (fromi), toi,
-            nverts, nfrom, g, heap_type, return_weighted,
+            nverts, nfrom, g, heap_type,
             RcppParallel::RVector <double> (dout));
 
     size_t chunk_size = run_sp::get_chunk_size (nfrom);
@@ -510,8 +504,7 @@ Rcpp::NumericMatrix rcpp_get_sp_dists_paired_par (const Rcpp::DataFrame graph,
         Rcpp::IntegerVector fromi,
         Rcpp::IntegerVector toi,
         const std::string& heap_type,
-        const bool is_spatial,
-        const bool return_weighted)
+        const bool is_spatial)
 {
     if (fromi.size () != toi.size ())
         Rcpp::stop ("pairwise dists must have from.size == to.size");
@@ -617,8 +610,7 @@ Rcpp::NumericMatrix rcpp_get_sp_dists (const Rcpp::DataFrame graph,
         const Rcpp::DataFrame vert_map_in,
         Rcpp::IntegerVector fromi,
         Rcpp::IntegerVector toi_in,
-        const std::string& heap_type,
-        const bool return_weighted)
+        const std::string& heap_type)
 {
     std::vector <size_t> toi =
         Rcpp::as <std::vector <size_t> > ( toi_in);
@@ -671,7 +663,7 @@ Rcpp::NumericMatrix rcpp_get_sp_dists (const Rcpp::DataFrame graph,
         {
             if (w [static_cast <size_t> (toi [j])] < INFINITE_DOUBLE)
             {
-                dout (i, j) = return_weighted ? w [static_cast <size_t> (toi [j])] : d [static_cast <size_t> (toi [j])];
+                dout (i, j) = d [static_cast <size_t> (toi [j])];
             }
         }
     }
@@ -743,6 +735,7 @@ Rcpp::List rcpp_get_paths (const Rcpp::DataFrame graph,
         Rcpp::checkUserInterrupt ();
         std::fill (w.begin(), w.end(), INFINITE_DOUBLE);
         std::fill (d.begin(), d.end(), INFINITE_DOUBLE);
+        std::fill (prev.begin(), prev.end(), INFINITE_INT);
         d [static_cast <size_t> (fromi [i_R])] =
             w [static_cast <size_t> (fromi [i_R])] = 0.0;
 
@@ -824,6 +817,7 @@ Rcpp::List rcpp_get_paths_pairwise (const Rcpp::DataFrame graph,
         Rcpp::checkUserInterrupt ();
         std::fill (w.begin(), w.end(), INFINITE_DOUBLE);
         std::fill (d.begin(), d.end(), INFINITE_DOUBLE);
+        std::fill (prev.begin(), prev.end(), INFINITE_INT);
         d [static_cast <size_t> (fromi [i_R])] =
             w [static_cast <size_t> (fromi [i_R])] = 0.0;
 

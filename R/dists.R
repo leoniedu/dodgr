@@ -1,4 +1,24 @@
-#' Calculate matrix of pair-wise distances between points.
+#' @title Calculate matrix of pair-wise distances between points.
+#'
+#' @description Calculates distances from input `data.frame` objects (`graph`),
+#' which must minimally contain three columns of `from`, `to`, and `d` or
+#' `dist`. If an additional column named `weight` or `wt` is present, shortest
+#' paths are calculated according to values specified in that column, while
+#' distances returned are calculated from the `d` or `dist` column. That is,
+#' paths between any pair of points will be calculated according to the minimal
+#' total sum of `weight` values (if present), while reported distances will be
+#' total sums of `dist` values.
+#'
+#' Graphs derived from Open Street Map street networks, via the
+#' \link{weight_streetnet} function, have columns labelled `d`, `d_weighted`,
+#' `time`, and `time_weighted`. For these inputs, paths between origin and
+#' destination points are always routed using `d_weighted` (or `t_weighted` for
+#' times), while final distances are sums of values of `d` (or `t` for times)-
+#' that is, of un-weighted distances or times - along those paths.
+#'
+#' The function is parallelized for efficient computation of distances between
+#' multiple origin and destination points, as described in the `from` parameter
+#' below.
 #'
 #' @param graph `data.frame` or equivalent object representing the network
 #' graph (see Notes). For `dodgr` street networks, this may be a network derived
@@ -68,19 +88,7 @@
 #'
 #' @param quiet If `FALSE`, display progress messages on screen.
 #'
-#' @param return_weighted If TRUE, returns the weighted distances used for path calculation instead of geometric distances
-#'
 #' @return square matrix of distances between nodes
-#'
-#' @details `graph` must minimally contain three columns of `from`,
-#' `to`, `dist`. If an additional column named `weight` or
-#' `wt` is present, shortest paths are calculated according to values
-#' specified in that column; otherwise according to `dist` values. Either
-#' way, final distances between `from` and `to` points are calculated
-#' by default according to values of `dist`. That is, paths between any pair of
-#' points will be calculated according to the minimal total sum of `weight`
-#' values (if present), while reported distances will be total sums of `dist`
-#' values.
 #'
 #' @family distances
 #' @export
@@ -150,8 +158,7 @@ dodgr_dists <- function (graph,
                          pairwise = FALSE,
                          heap = "BHeap",
                          parallel = TRUE,
-                         quiet = TRUE,
-                         return_weighted = FALSE) {
+                         quiet = TRUE) {
 
     graph <- tbl_to_df (graph)
 
@@ -201,8 +208,7 @@ dodgr_dists <- function (graph,
         heap,
         is_spatial,
         parallel,
-        pairwise,
-        return_weighted
+        pairwise
     )
 
 
@@ -226,8 +232,7 @@ dodgr_distances <- function (graph,
                              pairwise = FALSE,
                              heap = "BHeap",
                              parallel = TRUE,
-                             quiet = TRUE,
-                             return_weighted = FALSE) {
+                             quiet = TRUE) {
 
     dodgr_dists (graph,
         from,
@@ -236,8 +241,7 @@ dodgr_distances <- function (graph,
         pairwise = pairwise,
         heap = heap,
         parallel = parallel,
-        quiet = quiet,
-        return_weighted = return_weighted
+        quiet = quiet
     )
 }
 
@@ -523,8 +527,7 @@ calculate_distmat <- function (graph,
                                heap,
                                is_spatial,
                                parallel = TRUE,
-                               pairwise = FALSE,
-                               return_weighted = FALSE) {
+                               pairwise = FALSE) {
 
     flip <- FALSE
     if (length (from_index$index) > length (to_index$index)) {
@@ -543,8 +546,7 @@ calculate_distmat <- function (graph,
                 from_index$index,
                 to_index$index,
                 heap,
-                is_spatial,
-                return_weighted
+                is_spatial
             )
         } else {
             d <- rcpp_get_sp_dists_par (
@@ -553,8 +555,7 @@ calculate_distmat <- function (graph,
                 from_index$index,
                 to_index$index,
                 heap,
-                is_spatial,
-                return_weighted
+                is_spatial
             )
         }
     } else {
@@ -563,8 +564,7 @@ calculate_distmat <- function (graph,
             vert_map,
             from_index$index,
             to_index$index,
-            heap,
-            return_weighted
+            heap
         )
     }
 

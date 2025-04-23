@@ -31,7 +31,6 @@ dodgr_graph_cols <- function (graph) {
         if (length (yto) == 0) yto <- NA
     } else {
         edge_id <- find_edge_id_col (graph)
-
         d_col <- find_d_col (graph)
         w_col <- find_w_col (graph)
         # sc ensures this never happens, so not covered

@@ -428,7 +428,9 @@ change_col_names <- function (x, colvar, expected) {
             stop ("Graph already has a column named '", expected, "'")
         }
         matches <- which (names (x) == colvar)
-        stopifnot (length (matches) == 1L)
+        
+        stopifnot (length(matches) == 1)
+        
         names (x) [matches] <- expected
     }
     return (x)

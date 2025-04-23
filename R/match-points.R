@@ -33,7 +33,7 @@
 #' pts <- verts$id [pts]
 #' pts # names of those vertices
 match_pts_to_verts <- function (verts, xy, connected = FALSE) {
-
+    
     if (!all (c ("id", "x", "y") %in% names (verts))) {
         message (
             "First argument to match_pts_to_verts should be result of ",
@@ -42,18 +42,18 @@ match_pts_to_verts <- function (verts, xy, connected = FALSE) {
         )
         verts <- dodgr_vertices (verts)
     }
-
+    
     indx <- seq_len (nrow (verts))
     if (connected) {
         vertsi <- verts [which (verts$component == 1), ]
         indx <- match (vertsi$id, verts$id)
     }
-
+    
     xyi <- find_xy_col_simple (verts)
     verts <- data.frame (x = verts [indx, xyi [1]], y = verts [indx, xyi [2]])
-
+    
     xy <- pre_process_xy (xy)
-
+    
     # rcpp_points_index is 0-indexed, so ...
     indx [rcpp_points_index_par (verts, xy) + 1L]
 }
@@ -64,12 +64,12 @@ match_pts_to_verts <- function (verts, xy, connected = FALSE) {
 #' @family match
 #' @export
 match_points_to_verts <- function (verts, xy, connected = FALSE) {
-
+    
     match_pts_to_verts (verts, xy, connected = connected)
 }
 
 pre_process_xy <- function (xy) {
-
+    
     if (!(is.matrix (xy) || is.data.frame (xy))) {
         stop ("xy must be a matrix or data.frame")
     }
@@ -78,7 +78,7 @@ pre_process_xy <- function (xy) {
             stop ("xy must have only two columns")
         }
     }
-
+    
     if (is (xy, "sf")) {
         if (!"geometry" %in% names (xy)) {
             stop ("xy has no sf geometry column")
@@ -96,7 +96,7 @@ pre_process_xy <- function (xy) {
         xyi <- find_xy_col_simple (xy)
         xy <- data.frame (x = xy [, xyi [1]], y = xy [, xyi [2]])
     }
-
+    
     return (xy)
 }
 
@@ -147,28 +147,28 @@ pre_process_xy <- function (xy) {
 #' graph [edges, ] # The edges of the graph closest to `xy`
 match_pts_to_graph <- function (graph, xy,
                                 connected = FALSE, distances = FALSE) {
-
+    
     if (!is_graph_spatial (graph)) {
         stop ("Points may only be matched to spatial graphs.")
     }
-
+    
     if (connected) {
         graph <- graph [which (graph$component == 1), ]
     }
-
+    
     xy <- pre_process_xy (xy)
-
+    
     gr_cols <- dodgr_graph_cols (graph)
     gr_cols <- unlist (gr_cols [which (!is.na (gr_cols))])
     graph <- graph [, gr_cols]
     names (graph) <- names (gr_cols)
-
+    
     res <- rcpp_points_to_edges_par (graph, xy)
     index <- seq_len (nrow (xy))
-
+    
     # rcpp_points_index is 0-indexed, so ...
     graph_index <- as.integer (res [index]) + 1L
-
+    
     if (distances) {
         ret <- data.frame (
             index = graph_index,
@@ -177,7 +177,7 @@ match_pts_to_graph <- function (graph, xy,
     } else {
         ret <- graph_index
     }
-
+    
     return (ret)
 }
 
@@ -187,7 +187,7 @@ match_pts_to_graph <- function (graph, xy,
 #' @family match
 #' @export
 match_points_to_graph <- function (graph, xy, connected = FALSE, distances = FALSE) {
-
+    
     match_pts_to_graph (graph, xy, connected = connected, distances = distances)
 }
 
@@ -196,36 +196,36 @@ match_points_to_graph <- function (graph, xy, connected = FALSE, distances = FAL
 #' @param res Output of 'rcpp_points_index' function
 #' @noRd
 signed_intersection_dists <- function (graph, xy, res) {
-
+    
     n <- nrow (xy)
     index <- seq (n)
-
+    
     # rcpp_points_index is 0-indexed, so ...
     graph_index <- as.integer (res [index]) + 1L
-
+    
     xy_intersect <- data.frame (
         x = res [index + nrow (xy)],
         y = res [index + 2L * nrow (xy)]
     )
-
+    
     measure <- get_geodist_measure (graph)
-
+    
     d <- geodist::geodist (
         xy,
         xy_intersect,
         paired = TRUE,
         measure = measure
     )
-
+    
     # Then coordinates of graph edges for sign calculation
     xy_cols <- c ("xfr", "yfr", "xto", "yto")
     gxy <- graph [graph_index, xy_cols]
-
+    
     which_side <- (gxy$xto - gxy$xfr) * (xy_intersect$y - gxy$yfr) -
         (gxy$yto - gxy$yfr) * (xy_intersect$x - gxy$xfr)
     which_side [which_side < 0.0] <- -1
     which_side [which_side >= 0.0] <- 1
-
+    
     return (cbind (d_signed = d * which_side, xy_intersect))
 }
 
@@ -275,54 +275,54 @@ add_nodes_to_graph <- function (graph,
                                 xy,
                                 dist_tol = 1e-6,
                                 intersections_only = FALSE) {
-
+    
     measure <- get_geodist_measure (graph)
-
+    
     pts <- match_pts_to_graph (graph, xy, distances = TRUE)
     xy <- pre_process_xy (xy)
     pts$x0 <- xy [, 1]
     pts$y0 <- xy [, 2]
-
+    
     gr_cols <- dodgr_graph_cols (graph)
     gr_cols <- unlist (gr_cols [which (!is.na (gr_cols))])
     graph_std <- graph [, gr_cols] # standardise column names
     names (graph_std) <- names (gr_cols)
-
+    
     # Expand index to include all potentially bi-directional edges:
     index <- lapply (seq_along (pts$index), function (i) {
         out <- which (
             (graph_std$from == graph_std$from [pts$index [i]] &
-                graph_std$to == graph_std$to [pts$index [i]]) |
+                 graph_std$to == graph_std$to [pts$index [i]]) |
                 (graph_std$from == graph_std$to [pts$index [i]] &
-                    graph_std$to == graph_std$from [pts$index [i]])
+                     graph_std$to == graph_std$from [pts$index [i]])
         )
         cbind (rep (i, length (out)), out)
     })
     index <- data.frame (do.call (rbind, index))
     names (index) <- c ("n", "index")
-
+    
     genhash <- function (len = 10) {
         paste0 (sample (c (0:9, letters, LETTERS), size = len), collapse = "")
     }
-
+    
     edges_to_split <- graph_std [index$index, ]
     graph_to_add <- graph [index$index, ]
-
+    
     graph_std <- graph_std [-index$index, ]
     graph <- graph [-index$index, ]
-
+    
     edges_to_split$n <- index$n
-
+    
     edges_split <- lapply (unique (index$n), function (i) {
-
+        
         edges_to_split_i <- edges_to_split [which (edges_to_split$n == i), ]
-
+        
         d_wt <- edges_to_split_i$d_weighted / edges_to_split_i$d
         t_wt <- edges_to_split_i$time_weighted / edges_to_split_i$time
         t_scale <- edges_to_split_i$time / edges_to_split_i$d
-
+        
         new_edges_i <- lapply (seq_len (nrow (edges_to_split_i)), function (e) {
-
+            
             # Split edges either side of perpendicular points of intersection:
             edge_i <- edges_to_split_i [c (e, e), ]
             edge_i$to [1] <- edge_i$from [2] <- genhash ()
@@ -330,22 +330,22 @@ add_nodes_to_graph <- function (graph,
             edge_i$yto [1] <- pts$y [i]
             edge_i$xfr [2] <- pts$x [i]
             edge_i$yfr [2] <- pts$y [i]
-
+            
             xy_i <- data.frame (
                 x = as.numeric (c (edge_i [1, "xfr"], edge_i [1, "xto"], edge_i [2, "xto"])),
                 y = as.numeric (c (edge_i [1, "yfr"], edge_i [1, "yto"], edge_i [2, "yto"]))
             )
             dmat <- geodist::geodist (xy_i, measure = measure)
-
+            
             d_i <- geodist::geodist (
                 pts [i, c ("x", "y")],
                 pts [i, c ("x0", "y0")],
                 measure = measure
             )
             d_i <- as.numeric (d_i [1, 1])
-
+            
             if (any (dmat [upper.tri (dmat)] < dist_tol)) {
-
+                
                 edge_i <- edges_to_split_i [e, ]
                 edge_i_new <- rbind (edge_i, edge_i) # for edges to new point
                 # Reverse 2nd edge:
@@ -355,67 +355,67 @@ add_nodes_to_graph <- function (graph,
                 edge_i_new$xto [2] <- edge_i_new$xfr [1]
                 edge_i_new$yfr [2] <- edge_i_new$yto [1]
                 edge_i_new$yto [2] <- edge_i_new$yfr [1]
-
+                
                 d_i_min <- c (1, 1, 2) [which.min (dmat [upper.tri (dmat)])]
                 if (d_i_min == 1) {
                     edge_i_new <- edge_i_new [2:1, ]
                 }
-
+                
             } else {
-
+                
                 edge_i$d [1] <- dmat [1, 2]
                 edge_i$d [2] <- dmat [2, 3]
-
+                
                 edge_i$d_weighted <- edge_i$d * d_wt [c (e, e)]
                 edge_i$time <- edge_i$d * t_scale [c (e, e)]
                 edge_i$time_weighted <- edge_i$time * t_wt [c (e, e)]
-
+                
                 edge_i$edge_id <- paste0 (
                     edge_i$edge_id,
                     "_",
                     LETTERS [seq_len (nrow (edge_i))]
                 )
-
+                
                 edge_i_new <- edge_i # already 2 rows
             }
-
+            
             if (!intersections_only) {
-
+                
                 # Then add edges out to new point:
                 edge_i_new$from [1] <- edge_i_new$to [2] <- genhash (10L)
                 edge_i_new$xfr [1] <- pts$x0 [i]
                 edge_i_new$yfr [1] <- pts$y0 [i]
                 edge_i_new$xto [2] <- pts$x0 [i]
                 edge_i_new$yto [2] <- pts$y0 [i]
-
+                
                 edge_i_new$d <- d_i
                 edge_i_new$d_weighted <- d_i * d_wt [c (e, e)]
                 edge_i_new$time <- d_i * t_scale [c (e, e)]
                 edge_i_new$time_weighted <- edge_i_new$time * t_wt [c (e, e)]
-
+                
                 edge_i_new$edge_id <- vapply (
                     seq_len (nrow (edge_i_new)),
                     function (i) genhash (10),
                     character (1L)
                 )
-
+                
                 edge_i <- rbind (edge_i, edge_i_new)
             }
-
+            
             return (edge_i)
         })
-
+        
         return (do.call (rbind, new_edges_i))
     })
-
+    
     edges_split <- do.call (rbind, edges_split)
-
+    
     # Then match edges_split back on to original graph:
     graph_to_add <- graph_to_add [match (edges_split$n, index$n), ]
     gr_cols <- gr_cols [which (!is.na (gr_cols))]
     for (g in seq_along (gr_cols)) {
         graph_to_add [, gr_cols [g]] <- edges_split [[names (gr_cols) [g]]]
     }
-
+    
     return (rbind (graph, graph_to_add))
 }

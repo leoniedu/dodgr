@@ -115,7 +115,7 @@ add_nodes_to_graph_by_edge <- function (graph,
     # Group edges by edge_id
     unique_edges <- unique (edges_to_split$edge_id)
     all_edges_split <- list ()
-    
+    browser()
     # Process each unique edge
     for (edge_id in unique_edges) {
         # Get all instances of this edge
@@ -123,8 +123,8 @@ add_nodes_to_graph_by_edge <- function (graph,
         current_edge_1 <- current_edge [1, ]
         
         #  Get all points that match this edge instance
-        edge_pts <- pts [pts$pts_index %in% current_edge$n, ]
-        edge_pts <- edge_pts [!duplicated (edge_pts$proj_id), ]
+        edge_pts_0 <- pts [pts$pts_index %in% current_edge$n, ]
+        edge_pts <- edge_pts_0 [!duplicated (edge_pts_0$proj_id), ]
         
         # stop if no points
         if (nrow (edge_pts) == 0) {

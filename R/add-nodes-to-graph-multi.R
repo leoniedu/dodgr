@@ -1,6 +1,5 @@
-# ============================================================================
-# Helper Functions
-# ============================================================================
+# Helper functions --------------------------------------------------------
+
 
 
 #' Calculate edge times based on distance and maxspeed
@@ -26,9 +25,7 @@ calc_edge_time_by_name <- function(edge, wt_profile) {
     edge
 }
 
-# ============================================================================
-# Main Function
-# ============================================================================
+# Main function -----------------------------------------------------------
 
 #' Add nodes to a graph, allowing multiple points per edge
 #'
@@ -57,14 +54,10 @@ add_nodes_to_graph_multi <- function(
     intersections_only = FALSE,
     dist_min = dist_tol
 ) {
-    # ========================================================================
-    # 1. Input Validation and Initialization
-    # ========================================================================
+    # 1. Input validation and initialization -------------------------------
     if (debug) cat("Starting add_nodes_to_graph_multi with", nrow(xy), "points\n")
     
-    # ------------------------------------------------------------------------
-    # 1.1 Standardize Graph and Preprocess Points
-    # ------------------------------------------------------------------------
+    # 1.1 Standardize graph and preprocess points --------------------------
     gr_cols <- dodgr_graph_cols(graph)
     gr_cols <- unlist(gr_cols[which(!is.na(gr_cols))])
     graph_std <- graph[, gr_cols]
@@ -80,9 +73,7 @@ add_nodes_to_graph_multi <- function(
         warning(pts_removed, " duplicated points removed.")
     }
     
-    # ========================================================================
-    # 2. Point Processing and Vertex Matching
-    # ========================================================================
+    # 2. Point processing and vertex matching ------------------------------
     # Skip vertex distance filtering if we're only interested in intersections
     if (!intersections_only) {
         # Get all vertices from the graph for point matching
@@ -124,9 +115,7 @@ add_nodes_to_graph_multi <- function(
         return(graph)
     }
     
-    # ========================================================================
-    # 3. Match Points to Graph and Prepare for Processing
-    # ========================================================================
+    # 3. Match points to graph and prepare for processing ------------------
     # Match points to the nearest edges in the graph
     pts <- match_pts_to_graph(graph_std, xy_unique, distances = TRUE)
     pts$pt_id <- seq_len(nrow(pts))  # Assign a unique point ID to each input point
@@ -160,9 +149,7 @@ add_nodes_to_graph_multi <- function(
         stringsAsFactors = FALSE
     )
 
-    # ========================================================================
-    # 4. Process Each Edge with Points
-    # ========================================================================
+    # 4. Process each edge with points -------------------------------------
     # For each edge that has points on it, split it into segments
     for (edge_idx in edges_with_pts) {
         # Get the standardized edge data (using only the standardized graph)
@@ -172,9 +159,7 @@ add_nodes_to_graph_multi <- function(
         matched_pts_idx <- edge_matches[[as.character(edge_idx)]]
         matched_pts <- pts[matched_pts_idx, ]
 
-        # ====================================================================
-        # 4.1 Project Points onto Edge and Sort
-        # ====================================================================
+        # 4.1 Project points onto edge and sort ----------------------- 
         # Project points onto the edge and sort them by distance along the edge
         start_pt <- c(edge_row_std$xfr, edge_row_std$yfr)
         end_pt <- c(edge_row_std$xto, edge_row_std$yto)
@@ -192,9 +177,7 @@ add_nodes_to_graph_multi <- function(
         matched_pts <- matched_pts[ord, , drop = FALSE]
         proj_dists <- proj_dists[ord]
         
-        # ====================================================================
-        # 4.2 Match Points to Existing Vertices
-        # ====================================================================
+        # 4.2 Match points to existing vertices -------------------------- 
         # Check if points coincide with existing graph vertices
         if (!exists("graph_verts")) {
             graph_verts <- dodgr_vertices(graph_std)
@@ -204,9 +187,7 @@ add_nodes_to_graph_multi <- function(
         vts <- match_points_to_verts(verts = graph_verts, xy = matched_pts[, c("x", "y")])
         is_vertex <- !is.na(vts)
         
-        # ====================================================================
-        # 4.3 Filter Points to Avoid Zero-Length Segments
-        # ====================================================================
+        # 4.3 Filter points to avoid zero-length segments ---------------- 
         # For points that aren't vertices, check for and remove any that would
         # create zero-length or very short segments
         if (length(proj_dists) > 0 && any(!is_vertex)) {
@@ -245,9 +226,7 @@ add_nodes_to_graph_multi <- function(
             }
         }
 
-        # ====================================================================
-        # 4.4 Create Projection Data and Filter Duplicates
-        # ====================================================================
+        # 4.4 Create projection data and filter duplicates --------------- 
         # Create a data frame with projection coordinates and metadata
         proj_data <- data.frame(
             x = matched_pts$x,
@@ -289,9 +268,7 @@ add_nodes_to_graph_multi <- function(
             proj_data <- proj_data[keep_idx, , drop = FALSE]
         }
         
-        # ====================================================================
-        # 4.5 Create New Vertices for Split Points
-        # ====================================================================
+        # 4.5 Create new vertices for split points ----------------------- 
         # Get coordinates for points that need new vertices (non-vertex points)
         proj_coords <- proj_data[!proj_data$is_vertex, c("x", "y"), drop = FALSE]
         
@@ -365,9 +342,7 @@ add_nodes_to_graph_multi <- function(
             sum(pt_vec * edge_vec) / edge_len^2
         }, numeric(1))
         
-        # ====================================================================
-        # 4.8 Create Point-to-Vertex Connection Edges
-        # ====================================================================
+        # 4.8 Create point-to-vertex connection edges ------------------- 
         # Track created (pt_id, v_id, dir) to ensure edge uniqueness
         created_pt_edges <- new.env(parent = emptyenv())
         
@@ -395,9 +370,7 @@ add_nodes_to_graph_multi <- function(
                 if (exists(key, envir = created_pt_edges, inherits = FALSE)) next
                 assign(key, TRUE, envir = created_pt_edges)
                 
-                # ============================================================
-                # 4.8.1 Set Up Edge Geometry
-                # ============================================================
+                # 4.8.1 Set up edge geometry ----------------------------- 
                 # Determine edge direction and coordinates
                 if (dir == "forward") {
                     pt_from <- pt_id
@@ -421,9 +394,7 @@ add_nodes_to_graph_multi <- function(
                     measure = get_geodist_measure(graph)
                 )[1, 2]
                 
-                # ============================================================
-                # 4.8.2 Create New Edge with Basic Properties
-                # ============================================================
+                # 4.8.2 Create new edge with basic properties -------------- 
                 pt_edge <- edge_row_std
                 pt_edge[["from"]] <- pt_from
                 pt_edge[["to"]] <- pt_to
@@ -433,9 +404,7 @@ add_nodes_to_graph_multi <- function(
                 pt_edge[["yto"]] <- pt_yto
                 pt_edge$d <- pt_len
                 
-                # ============================================================
-                # 4.8.3 Apply Weighting and Profile Logic
-                # ============================================================
+                # 4.8.3 Apply weighting and profile logic ------------------ 
                 if (!is.null(wt_profile) || !is.null(wt_profile_file)) {
                     # Use provided weight profile for edge properties
                     wp <- get_profile(wt_profile = wt_profile, file = wt_profile_file)
@@ -449,6 +418,13 @@ add_nodes_to_graph_multi <- function(
                     pt_edge <- calc_edge_time_by_name(pt_edge, wt_profile)
                 } else {
                     # Fallback to simple ratio-based weighting if no profile provided
+                    if (edge_row_std$d > 0) {
+                        d_ratio <- pt_len / edge_row_std$d
+                        time_ratio <- 1  # Default time ratio if not specified
+                    } else {
+                        d_ratio <- 1
+                        time_ratio <- 1
+                    }
                     pt_edge$d_weighted <- pt_len * d_ratio
                     pt_edge$highway <- edge_row_std$highway
                     pt_edge$time <- pt_len * (edge_row_std$time / edge_row_std$d)
@@ -458,17 +434,13 @@ add_nodes_to_graph_multi <- function(
             }  # End of dir loop (forward/backward)
         }  # End of unique_input_idx loop
         
-        # ====================================================================
-        # 5. Assemble Final Graph
-        # ====================================================================
+        # 5. Assemble final graph -----------------------------------------
         # This section combines all processed edges and vertices into the final graph
         # structure, ensuring proper handling of split edges and point-to-vertex
         # connections while maintaining graph integrity.
     }  # End of edges_with_pts loop
     
-    # ====================================================================
-    # 5.1 Categorize and Process Edges
-    # ====================================================================
+    # 5.1 Categorize and process edges -----------------------------------
     # Initialize lists to hold different edge types
     split_edges <- list()
     pt_edges <- list()
@@ -584,22 +556,16 @@ add_nodes_to_graph_multi <- function(
         }
     }
 
-    # ====================================================================
-    # 5. Final Graph Assembly
-    # ====================================================================
+    # 5. Final graph assembly --------------------------------------------
     # This section combines all processed edges into the final graph structure,
     # ensuring proper handling of split edges and point-to-vertex connections.
     
-    # ====================================================================
-    # 5.1 Convert Edge Lists to Data Frames
-    # ====================================================================
+    # 5.1 Convert edge lists to data frames ------------------------------
     # Convert lists of edges to data frames for final assembly
     split_edges_df <- if (length(split_edges) > 0) do.call(rbind, split_edges) else NULL
     pt_edges_df <- if (length(pt_edges) > 0) do.call(rbind, pt_edges) else NULL
     
-    # ====================================================================
-    # 5.2 Remove Duplicate Point-to-Vertex Edges
-    # ====================================================================
+    # 5.2 Remove duplicate point-to-vertex edges -------------------------
     # Ensure no duplicate connections between the same points
     if (!is.null(pt_edges_df)) {
         dup_idx <- duplicated(pt_edges_df[, c("from", "to")])
@@ -609,9 +575,7 @@ add_nodes_to_graph_multi <- function(
         }
     }
 
-    # ====================================================================
-    # 5.3 Process Split Edges
-    # ====================================================================
+    # 5.3 Process split edges --------------------------------------------
     # Handle edges created by splitting original edges at points
     split_edges_final <- NULL
     if (!is.null(split_edges_df)) {
@@ -630,9 +594,7 @@ add_nodes_to_graph_multi <- function(
         }
     }
     
-    # ====================================================================
-    # 5.4 Process Point-to-Vertex Edges
-    # ====================================================================
+    # 5.4 Process point-to-vertex edges -----------------------------------
     # Handle new edges connecting input points to the graph
     pt_edges_final <- NULL
     if (!is.null(pt_edges_df)) {
@@ -650,9 +612,7 @@ add_nodes_to_graph_multi <- function(
         pt_edges_final$highway <- highway
     }
     
-    # ====================================================================
-    # 5.5 Combine All Edge Types
-    # ====================================================================
+    # 5.5 Combine all edge types -----------------------------------------
     # Combine in order: untouched edges, split edges, point-to-vertex edges
     result_graph <- rbind(untouched_graph, split_edges_final, pt_edges_final)
     

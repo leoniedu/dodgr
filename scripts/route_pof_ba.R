@@ -1,4 +1,47 @@
-source("scripts/connect_components_uf_0.R")
+ufsiglanow <- "ba"
+## following parameter used to
+# break_long_edges
+# remove small components
+# associate points to components if d< (dmin_component/2)
+# otherwise connect points to closest component
+dmin_component <- 1000
+
+use_cache <- TRUE
+
+library(geoarrow)
+library(arrow)
+library(sf)
+library(ggplot2)
+library(dplyr)
+devtools::load_all("../dodgr")
+devtools::load_all("../dodgrconnect/")
+#devtools::load_all()
+dodgr_cache_off()
+
+
+uf <- orce::ufs%>%
+  filter(uf_sigla==toupper(ufsiglanow))
+uf_buffer <- st_buffer(readr::read_rds("~/github/tractdistancesbr/data-raw/br_states.rds")%>%
+                         filter(abbrev_state==toupper(ufsiglanow)), dist = units::set_units(10000, "m"))%>%
+  st_transform(crs = 4326)
+
+agencias <- orce::agencias_bdo%>%filter(substr(agencia_codigo,1,2)==uf$uf_codigo)
+
+set.seed(1)
+
+pts_0 <- readr::read_csv("~/gitlab/ibgeba/pof2024ba/data-raw/sigc/1505251132lista de enderecos.csv", col_types = "cccccccccccccccc")%>%
+  orce::rename_ibge()%>%
+  mutate(pt=as.numeric(pt))%>%
+  mutate(lat_f=sigba::fix_lat_lon(lat),
+         lon_f=sigba::fix_lat_lon(lon)
+         )
+  
+fname_complete <- paste0("data-raw/", ufsiglanow, "_complete_connected.rds")
+complete_sf_fname <- file.path(here::here("data-raw", paste0(toupper(ufsiglanow), "_sf.rds")))
+waterways <- c("river", "canal")
+complete_net_0_fname <- file.path(here::here('data-raw'), paste0(toupper(ufsiglanow), "_complete.rds"))
+complete_map_fname <- glue::glue("../tractdistancesbr/data-raw/{toupper(uf$uf_sigla)}.parquet")
+
 
 if ((!file.exists(complete_net_0_fname))|(!use_cache)) {
   if ((!file.exists(complete_sf_fname))|(!use_cache)) {
@@ -50,7 +93,7 @@ rm(complete_net_0)
 
 
 ## Lets find out which components connect to points
-pts <- match_pts_to_graph (complete_net_1, tracts, distances = TRUE)
+pts <- match_pts_to_graph (complete_net_1, pts_0%>%select(x=lon_f,y=lat_f), distances = TRUE)
 pts$component <- complete_net_1$component[pts$index]
 pts$xy_index <- 1:nrow(pts)
 ## Important: pts$index always refers to the original graph
@@ -59,6 +102,8 @@ pts$index <- complete_net_1$graph_index[pts$index]
 complete_net_2 <- complete_net_1%>%
   filter(component%in%pts$component)%>%
   ungroup()
+dim(complete_net_2)
+dim(complete_net_2)-dim(complete_net_1)
 rm(complete_net_1)
 gc()
 
@@ -67,7 +112,7 @@ gc()
 pts_all <- pts[0,]
 cmp_all <- table(pts$component)%>%sort(decreasing = TRUE)%>%names()%>%as.numeric()
 #cmp_all <- cmp_all[cmp_all<=5]
-tracts$xy_index <- 1:nrow(tracts)
+pts$xy_index <- 1:nrow(pts)
 for (i in cmp_all) {
   print(i)
   complete_net_i <- complete_net_2%>%
@@ -75,15 +120,15 @@ for (i in cmp_all) {
   pts_cmp <- pts%>%filter(component==i)%>%
     anti_join(pts_all, by='xy_index')
   if (length(pts_all$xy_index)==0) {
-    tractsnow <- tracts
+    ptsnow <- pts
   } else {
-    tractsnow <- tracts[-pts_all$xy_index,]
+    ptsnow <- pts[-pts_all$xy_index,]
   }
-  tractsnow <- tractsnow%>%anti_join(pts_cmp, by="xy_index")
-  if (nrow(tractsnow)>0) {
-    pts_i <- match_pts_to_graph (complete_net_i, tractsnow, distances = TRUE)
+  ptsnow <- ptsnow%>%anti_join(pts_cmp, by="xy_index")
+  if (nrow(ptsnow)>0) {
+    pts_i <- match_pts_to_graph (complete_net_i, ptsnow%>%select(x=x, y=y), distances = TRUE)
     pts_i$component <- i
-    pts_i$xy_index <- tractsnow$xy_index
+    pts_i$xy_index <- ptsnow$xy_index
     pts_i$index <- complete_net_i$graph_index[pts_i$index]
     pts_i <- pts_i%>%filter(abs(d_signed)<(dmin_component/2))
     pts_now <- bind_rows(pts_cmp,pts_i)
@@ -93,6 +138,7 @@ for (i in cmp_all) {
   pts_now <- pts_now%>%distinct(xy_index,.keep_all = TRUE)
   pts_all <- rbind(pts_all, pts_now)
 }
+
 pts_all <- pts_all%>%
   left_join(complete_net_2%>%select(index=graph_index, highway))
 stopifnot(0==(pts_all%>%filter(is.na(highway))%>%nrow()))

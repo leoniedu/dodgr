@@ -4,12 +4,11 @@ source("scripts/connect_components_uf_0.R")
 
 complete_connected <- readr::read_rds(fname_complete)
 pts_connected <- readr::read_rds(fname_pts)
-
-
 tracts <- readr::read_rds(fname_tracts)
 
+stop()
 
-paths_agencias_0 <- dodgr_paths(
+paths_agencias_0 <- dodgr_paths(complete_connected
   , 
   #from = agencias%>%filter(grepl("HUMA", agencia_nome))%>%st_coordinates(),
   #to = agencias%>%filter(grepl("CAR", agencia_nome))%>%st_coordinates(),

@@ -4,7 +4,14 @@
 \alias{dodgr_streetnet_sc}
 \title{Extract a street network in \pkg{silicate}-format for a given location.}
 \usage{
-dodgr_streetnet_sc(bbox, pts = NULL, expand = 0.05, quiet = TRUE)
+dodgr_streetnet_sc(
+  bbox,
+  pts = NULL,
+  expand = 0.05,
+  quiet = TRUE,
+  fts = c("highway", "restriction", "access", "bicycle", "foot", "motorcar",
+    "motor_vehicle", "vehicle", "toll")
+)
 }
 \arguments{
 \item{bbox}{Bounding box as vector or matrix of coordinates, or location

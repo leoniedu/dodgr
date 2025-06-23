@@ -36,7 +36,7 @@ edge lengths by approximately half.
 data(hampi, package = "dodgr")
 
 # Create weighted street network
-net <- dodgr::weight_streetnet(hampi)
+net <- weight_streetnet(hampi)
 
 # View initial distribution of edge lengths
 summary(net$d)

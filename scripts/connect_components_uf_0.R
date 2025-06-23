@@ -1,4 +1,4 @@
-ufsiglanow <- "ap"
+ufsiglanow <- "ba"
 n_sample <- 1000
 ## following parameter used to
 # break_long_edges
@@ -7,7 +7,7 @@ n_sample <- 1000
 # otherwise connect points to closest component
 dmin_component <- 1000
 
-use_cache <- FALSE
+use_cache <- TRUE
 
 library(geoarrow)
 library(arrow)

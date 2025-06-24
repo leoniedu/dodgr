@@ -2,7 +2,7 @@ library(tictoc)
 library(cli)
 tic()
 cli::cli_inform(as.character(Sys.time()))
-ufsiglanow <- "se"
+ufsiglanow <- "ac"
 library(geoarrow)
 library(arrow)
 library(sf)
@@ -98,16 +98,25 @@ setores_agencias <- bind_rows(
 )
 
 net_connected_r1 <- net_r1%>%
-  slice_sample(n=2)%>%
-  add_nodes_to_graph_multi(xy=setores_agencias%>%head(20), wt_profile = "motorcar", highway = "artificial_road", wt_profile_file = "scripts/profile_hw.json", debug = TRUE, dist_tol = 1, dist_min = 10, intersections_only = FALSE);dim(net_connected_r1);dim(net_connected_r1%>%unique())
-                                                                                                                                                                                                                                                   e)
+  #slice_sample(n=10)%>%
+  add_nodes_to_graph_multi(xy=setores_agencias#%>%slice_sample(n=10)
+                           , 
+                           wt_profile = "motorcar", 
+                           highway = "artificial_road", 
+                           wt_profile_file = "scripts/profile_hw.json", 
+                           debug = TRUE, dist_tol = 1, dist_min = 10, 
+                           intersections_only = TRUE)
+dim(net_connected_r1)
+
+dim(net_connected_r1%>%unique())
+
 stop()
 
 net_connected_r1 <- net_r1%>%
   head(1)%>%
   add_nodes_to_graph_multi(xy=setores_agencias%>%head(20), wt_profile = "motorcar", highway = "artificial_road", wt_profile_file = "scripts/profile_hw.json", xy_id = setores_agencias$id%>%head(20))
 
-  add_nodes_to_graph_by_edge(xy=setores_agencias%>%head(20), wt_profile = "motorcar", highway = "artificial_road", wt_profile_file = "scripts/profile_hw.json", xy_id = setores_agencias$id%>%head(20))
+add_nodes_to_graph_by_edge(xy=setores_agencias%>%head(20), wt_profile = "motorcar", highway = "artificial_road", wt_profile_file = "scripts/profile_hw.json", xy_id = setores_agencias$id%>%head(20))
 
 
 d_agencias_setores <- dodgr_dists_nearest(graph = net_connected_r1, to = setores%>%head()%>%st_coordinates(), from=agencias%>%st_coordinates(), shortest=TRUE)

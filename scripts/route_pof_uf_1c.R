@@ -2,7 +2,7 @@ library(tictoc)
 library(cli)
 tic()
 cli::cli_inform(as.character(Sys.time()))
-ufsiglanow <- "ac"
+ufsiglanow <- "ba"
 library(geoarrow)
 library(arrow)
 library(sf)
@@ -53,9 +53,15 @@ uf_buffer <- st_buffer(readr::read_rds("~/github/tractdistancesbr/data-raw/br_st
                          filter(abbrev_state==toupper(ufsiglanow)), dist = units::set_units(10000, "m"))%>%
   st_transform(crs = 4326)
 
-agencias <- orce::agencias_bdo%>%filter(substr(agencia_codigo,1,2)==uf$uf_codigo)
+agencias <- orce::agencias_bdo%>%filter(substr(agencia_codigo,1,2)==uf$uf_codigo)%>%
+  mutate(municipio_codigo=substr(agencia_codigo,1,7))
+
 setores <- orce::pontos_setores%>%
-  filter(substr(setor,1,2)==uf$uf_codigo)
+  filter(substr(setor,1,2)==uf$uf_codigo)%>%
+  mutate(municipio_codigo=substr(setor,1,7))%>%
+  left_join(orce::agencias_mun)
+  
+  
 set.seed(1)
 
 cli::cli_inform(as.character(Sys.time()))
@@ -93,33 +99,34 @@ net_r1 <- net_r%>%
 
 ## create edges to the points and agencias
 setores_agencias <- bind_rows(
-  setores%>%transmute(id=paste0("setor_", setor), x=setor_lon, y=setor_lat),
-  agencias%>%transmute(id=paste0('agencia_', agencia_codigo), x=agencia_lon, y=agencia_lat)
+  setores%>%
+    transmute(id=paste0("setor_", setor), x=setor_lon, y=setor_lat, agencia_municipio_codigo),
+  agencias%>%transmute(id=paste0('agencia_', agencia_codigo), x=agencia_lon, y=agencia_lat, agencia_municipio_codigo=substr(agencia_codigo,1,7))
 )
 
-net_connected_r1 <- net_r1%>%
-  #slice_sample(n=10)%>%
-  add_nodes_to_graph_multi(xy=setores_agencias#%>%slice_sample(n=10)
-                           , 
-                           wt_profile = "motorcar", 
+
+set.seed(1);net_connected_r1_0 <- net_r1%>%
+  #slice_sample(n=1000)%>%
+  split_edges_at_projections(xy=setores_agencias, dist_tol = 5, debug = TRUE)
+net_connected_r1 <- net_connected_r1_0%>%
+  add_edges_to_graph(xy=setores_agencias, wt_profile = "motorcar", 
                            highway = "artificial_road", 
                            wt_profile_file = "scripts/profile_hw.json", 
-                           debug = TRUE, dist_tol = 1, dist_min = 10, 
-                           intersections_only = TRUE)
+                           bidirectional = TRUE)
 dim(net_connected_r1)
 
 dim(net_connected_r1%>%unique())
 
 stop()
 
-net_connected_r1 <- net_r1%>%
-  head(1)%>%
-  add_nodes_to_graph_multi(xy=setores_agencias%>%head(20), wt_profile = "motorcar", highway = "artificial_road", wt_profile_file = "scripts/profile_hw.json", xy_id = setores_agencias$id%>%head(20))
-
-add_nodes_to_graph_by_edge(xy=setores_agencias%>%head(20), wt_profile = "motorcar", highway = "artificial_road", wt_profile_file = "scripts/profile_hw.json", xy_id = setores_agencias$id%>%head(20))
-
-
-d_agencias_setores <- dodgr_dists_nearest(graph = net_connected_r1, to = setores%>%head()%>%st_coordinates(), from=agencias%>%st_coordinates(), shortest=TRUE)
+d_agencias_setores <- dodgr_dists_nearest(
+  graph = 
+    net_connected_r1%>%
+    mutate(
+      d=time_weighted,
+      edge_type=if_else(grepl("artificial", highway), "artificial", "real"))
+  , from = setores%>%st_coordinates(), to=agencias%>%st_coordinates())%>%
+  bind_cols(setores%>%st_drop_geometry()%>%select(agencia_municipio_codigo))
 
 
 toc()

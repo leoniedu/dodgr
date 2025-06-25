@@ -11,14 +11,14 @@
 #' @param debug Logical; if TRUE, print debug output.
 #' @return Modified graph with edges split at projection points.
 #' @export
-split_graph_on_points <- function(
+split_edges_at_projections <- function(
     graph,
     xy,
     dist_tol = 1e-6,
     dist_min = dist_tol,
     debug = FALSE
 ) {
-    if (debug) cat("Starting split_graph_on_points with", nrow(xy), "points\n")
+    if (debug) cat("Starting split_edges_at_projections with", nrow(xy), "points\n")
     
     # Step 1: Standardize graph columns and preprocess points
     gr_cols <- dodgr_graph_cols(graph)

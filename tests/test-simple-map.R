@@ -190,12 +190,21 @@ path_map(network=net_b, points_sf = xy, roads_sf = roads_sf)
 
 ## connect point
 net_b2 <- net_b%>%
-  filter(component==1)%>%
-  split_graph_on_points(xy=xy)%>%
+  dplyr::filter(component==1)%>%
   add_edges_to_graph(xy=xy, highway="artificial_road", wt_profile = "motorcar", wt_profile_file = "scripts/profile_hw.json")
 
+library(ggplot2)
+library(ggrepel)
+library(dplyr)
 path_map(network=net_b2, points_sf = xy, roads_sf = roads_sf)
 
+
+net_b3 <- net_b%>%
+  dplyr::filter(component==1)%>%
+  split_edges_at_projections(xy=xy)%>%
+  add_edges_to_graph(xy=xy, highway="artificial_road", wt_profile = "motorcar", wt_profile_file = "scripts/profile_hw.json")
+path_map(network=net_b3, points_sf = xy, roads_sf = roads_sf)
+stop()
 
 # connect networks
 v2 <- v_initial%>%filter(component==2)%>%

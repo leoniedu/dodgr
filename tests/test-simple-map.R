@@ -185,8 +185,16 @@ message("- Number of edges: ", nrow(net_b))
 # print(initial_paths)
 # net_b[unlist(initial_paths),]
 library(ggrepel)
+xy <- points_sf%>%filter(id%in%c("p_1","p_4"))
+path_map(network=net_b, points_sf = xy, roads_sf = roads_sf)
 
-path_map(network=net_b, points_sf = points_sf%>%filter(id%in%c("p_1","p_4")), roads_sf = roads_sf)
+## connect point
+net_b2 <- net_b%>%
+  filter(component==1)%>%
+  split_graph_on_points(xy=xy)%>%
+  add_edges_to_graph(xy=xy, highway="artificial_road", wt_profile = "motorcar", wt_profile_file = "scripts/profile_hw.json")
+
+path_map(network=net_b2, points_sf = xy, roads_sf = roads_sf)
 
 
 # connect networks

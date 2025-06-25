@@ -12,24 +12,6 @@
 #' @param ... Additional arguments (reserved for future compatibility).
 #' @return Modified graph with new nodes and edges.
 #' @export
-#' Robust version of calc_edge_time that works by column name
-calc_edge_time_by_name <- function(edge, wt_profile) {
-    required <- c("d", "d_weighted", "maxspeed")
-    missing <- setdiff(required, names(edge))
-    if (length(missing) > 0) {
-        stop("Missing columns in edge: ", paste(missing, collapse = ", "))
-    }
-    speed_m_per_s <- edge$maxspeed * 1000 / 3600
-    edge$time <- edge$d / speed_m_per_s
-    edge$time_weighted <- edge$d_weighted / speed_m_per_s
-    if ("dz" %in% names(edge) && wt_profile %in% c("foot", "bicycle")) {
-        # Optionally handle incline adjustment here if needed
-        # edge <- times_by_incline(edge, wt_profile)
-    }
-    edge$maxspeed <- NULL
-    edge
-}
-
 add_nodes_to_graph_multi <- function(
     graph,
     xy,

@@ -1,7 +1,9 @@
 #' Add edges between specified points and closest graph vertices
 #'
 #' Creates new edges connecting specified point coordinates to their closest
-#' vertices in the graph, as determined by \code{match_pts_to_verts}.
+#' vertices in the graph, as determined by \code{match_pts_to_verts}. The new
+#' edges inherit properties from the first edge found that contains the matched
+#' vertex, ensuring consistent weight and time calculations.
 #'
 #' @param graph A \code{data.frame} representing the graph with the specified
 #' columns of a \code{dodgr} graph.
@@ -12,14 +14,23 @@
 #' the points.
 #' @param highway Character string specifying the highway type for the new edges.
 #' This determines the weight calculations for \code{d_weighted}, \code{time},
-#' and \code{time_weighted}.
+#' and \code{time_weighted}. Original graph edges retain their existing highway
+#' and other column values.
 #' @param wt_profile Weight profile for the specified mode of transport (see
-#' \link{weight_streetnet}).
+#' \link{weight_streetnet}). If \code{NULL} (default), edge properties are
+#' inherited from the matched edges in the graph.
 #' @param wt_profile_file Custom profile file for weights (see
-#' \link{weight_streetnet}).
+#' \link{weight_streetnet}). Only used when \code{wt_profile} is specified.
 #' @param bidirectional If \code{TRUE} (default), creates bidirectional edges
 #' (to and from each point). If \code{FALSE}, creates only unidirectional edges
 #' from points to vertices.
+#'
+#' @details The function matches each point to its closest vertex using
+#' \code{match_pts_to_verts}, then creates new edges with properties based on
+#' the first existing edge found that contains the matched vertex. When
+#' \code{wt_profile} is \code{NULL}, edge weights and times are calculated by
+#' inheriting ratios from the matched edges. When a weight profile is specified,
+#' standard weight calculations are applied based on the highway type and profile.
 #'
 #' @return A modified graph with additional edges connecting the specified
 #' points to their closest vertices.
@@ -44,7 +55,7 @@
 add_edges_to_graph <- function(graph,
                               xy,
                               highway,
-                              wt_profile = "bicycle",
+                              wt_profile = NULL,
                               wt_profile_file = NULL,
                               bidirectional = TRUE) {
 
@@ -78,10 +89,15 @@ add_edges_to_graph <- function(graph,
         stop("Mismatch between number of points and matched vertices")
     }
     
-    # Generate unique IDs for the new point vertices
-    charvec <- c(letters, LETTERS, 0:9)
-    randid <- function(len = 10) {
-        paste0(sample(charvec, len, replace = TRUE), collapse = "")
+    # Standardize graph column names following add_nodes_to_graph pattern
+    gr_cols <- dodgr_graph_cols(graph_t)
+    gr_cols <- unlist(gr_cols[which(!is.na(gr_cols))])
+    graph_std <- graph_t[, gr_cols] # standardise column names
+    names(graph_std) <- names(gr_cols)
+    
+    # TODO: genhash is duplicated in multiple files - should be consolidated to utils
+    genhash <- function(len = 10) {
+        paste0(sample(c(0:9, letters, LETTERS), size = len), collapse = "")
     }
     
     # Get weight profile if specified
@@ -96,161 +112,188 @@ add_edges_to_graph <- function(graph,
         way_wt <- 1
     }
     
-    # Create new edges
-    new_edges <- list()
+    # Create pts structure similar to add_nodes_to_graph
+    # pts$index points to the first edge containing each matched vertex
+    pts <- data.frame(
+        x0 = xy_processed[, 1],
+        y0 = xy_processed[, 2],
+        stringsAsFactors = FALSE
+    )
     
-    for (i in seq_len(nrow(xy_processed))) {
-        matched_vertex <- verts[matched_indices[i], ]
-        pt_x <- xy_processed[i, 1]
-        pt_y <- xy_processed[i, 2]
-        pt_id <- if (has_id_col) point_ids[i] else paste0("pt_", randid())
+    # Find first edge containing each matched vertex
+    pts$index <- sapply(matched_indices, function(vert_idx) {
+        vertex_id <- verts$id[vert_idx]
+        edge_indices <- which(graph_std$from == vertex_id | graph_std$to == vertex_id)
+        if (length(edge_indices) > 0) {
+            edge_indices[1]  # Take first edge
+        } else {
+            NA_integer_
+        }
+    })
+    
+    # Check that all vertices have associated edges
+    if (any(is.na(pts$index))) {
+        missing_edges <- which(is.na(pts$index))
+        stop("Could not find edges for ", length(missing_edges), " matched vertices. ",
+             "This indicates an inconsistency in the graph structure.")
+    }
+    
+    # Expand index to include all potentially bi-directional edges:
+    # Following exact pattern from add_nodes_to_graph
+    index <- lapply(seq_along(pts$index), function(i) {
+        out <- which(
+            (graph_std$from == graph_std$from[pts$index[i]] &
+                 graph_std$to == graph_std$to[pts$index[i]]) |
+                (graph_std$from == graph_std$to[pts$index[i]] &
+                     graph_std$to == graph_std$from[pts$index[i]])
+        )
+        cbind(rep(i, length(out)), out)
+    })
+    index <- data.frame(do.call(rbind, index))
+    names(index) <- c("n", "index")
+    
+    # Create point IDs - use custom IDs if provided, otherwise generate with genhash
+    pt_ids <- if (has_id_col) {
+        point_ids
+    } else {
+        sapply(seq_len(nrow(pts)), function(i) paste0("pt_", genhash()))
+    }
+    
+    # Process edges using the index structure (following add_nodes_to_graph pattern)
+    edges_to_reference <- graph_std[index$index, ]
+    edges_to_reference$n <- index$n  # Add point index
+    graph_to_add <- graph[index$index, ]
+    
+    # Create new edges based on the index
+    new_edges <- lapply(unique(index$n), function(i) {
+        
+        # Get all edges for this point
+        edges_for_point_i <- edges_to_reference[which(edges_to_reference$n == i), ]
+        pt_data <- pts[i, ]
+        pt_id <- pt_ids[i]
         
         # Calculate distance between point and matched vertex
         if (is_graph_spatial(graph_t)) {
             measure <- get_geodist_measure(graph_t)
             d <- geodist::geodist(
-                data.frame(x = c(pt_x, matched_vertex$x), 
-                          y = c(pt_y, matched_vertex$y)),
+                data.frame(x = c(pt_data$x0, verts$x[matched_indices[i]]), 
+                          y = c(pt_data$y0, verts$y[matched_indices[i]])),
                 measure = measure
             )[1, 2]
         } else {
-            d <- sqrt((pt_x - matched_vertex$x)^2 + (pt_y - matched_vertex$y)^2)
+            d <- sqrt((pt_data$x0 - verts$x[matched_indices[i]])^2 + 
+                     (pt_data$y0 - verts$y[matched_indices[i]])^2)
         }
         
-        # Create base edge template
-        edge_template <- data.frame(
-            edge_id = character(1),
-            from = character(1),
-            to = character(1),
-            xfr = numeric(1),
-            yfr = numeric(1),
-            xto = numeric(1),
-            yto = numeric(1),
+        # Create edges for this point (to and optionally from)
+        new_edges_for_point <- list()
+        
+        # Edge from point to vertex
+        new_edge_to <- data.frame(
+            edge_id = paste0("pt_edge_", i, "_to_vert"),
+            from = pt_id,
+            to = verts$id[matched_indices[i]],
+            xfr = pt_data$x0,
+            yfr = pt_data$y0,
+            xto = verts$x[matched_indices[i]],
+            yto = verts$y[matched_indices[i]],
             d = d,
-            d_weighted = numeric(1),
-            highway = highway,
             stringsAsFactors = FALSE
         )
         
-        # Add time columns if they exist in the graph
-        if (!is.na(gr_cols$time)) {
-            edge_template$time <- numeric(1)
-            edge_template$time_weighted <- numeric(1)
-        }
-        
-        # Create edge from point to vertex
-        edge_pt_to_vert <- edge_template
-        edge_pt_to_vert$edge_id <- paste0("pt_edge_", i, "_to_vert")
-        edge_pt_to_vert$from <- pt_id
-        edge_pt_to_vert$to <- matched_vertex$id
-        edge_pt_to_vert$xfr <- pt_x
-        edge_pt_to_vert$yfr <- pt_y
-        edge_pt_to_vert$xto <- matched_vertex$x
-        edge_pt_to_vert$yto <- matched_vertex$y
-        
         # Calculate weights and times
         if (!is.null(wp)) {
-            edge_pt_to_vert$d_weighted <- d / way_wt
+            # Use weight profile calculations with the specified highway type
+            new_edge_to$d_weighted <- d / way_wt
             
-            # Apply weight profile calculations
-            edge_pt_to_vert <- set_maxspeed(edge_pt_to_vert, wt_profile, wt_profile_file)
-            edge_pt_to_vert <- weight_by_num_lanes(edge_pt_to_vert, wt_profile)
+            # Create temporary edge with highway for weight calculations
+            temp_edge <- new_edge_to
+            temp_edge$highway <- highway
+            temp_edge <- set_maxspeed(temp_edge, wt_profile, wt_profile_file)
+            temp_edge <- weight_by_num_lanes(temp_edge, wt_profile)
             
-            if (!is.na(gr_cols$time)) {
-                edge_pt_to_vert <- calc_edge_time_by_name(edge_pt_to_vert, wt_profile)
+            # Copy calculated values back (excluding highway column)
+            if ("d_weighted" %in% names(temp_edge)) {
+                new_edge_to$d_weighted <- temp_edge$d_weighted
+            }
+            
+            if (!is.na(gr_cols["time"])) {
+                temp_edge <- calc_edge_time_by_name(temp_edge, wt_profile)
+                if ("time" %in% names(temp_edge)) {
+                    new_edge_to$time <- temp_edge$time
+                }
+                if ("time_weighted" %in% names(temp_edge)) {
+                    new_edge_to$time_weighted <- temp_edge$time_weighted
+                }
             }
         } else {
-            edge_pt_to_vert$d_weighted <- d
-            if (!is.na(gr_cols$time)) {
-                # Use default speed if no profile specified (assume 15 km/h for bicycle)
-                default_speed <- 15 # km/h
-                edge_pt_to_vert$time <- d / (default_speed * 1000 / 3600) # convert to seconds
-                edge_pt_to_vert$time_weighted <- edge_pt_to_vert$time
-            }
-        }
-        
-        new_edges[[length(new_edges) + 1]] <- edge_pt_to_vert
-        
-        # Create bidirectional edge if requested
-        if (bidirectional) {
-            edge_vert_to_pt <- edge_template
-            edge_vert_to_pt$edge_id <- paste0("pt_edge_", i, "_from_vert")
-            edge_vert_to_pt$from <- matched_vertex$id
-            edge_vert_to_pt$to <- pt_id
-            edge_vert_to_pt$xfr <- matched_vertex$x
-            edge_vert_to_pt$yfr <- matched_vertex$y
-            edge_vert_to_pt$xto <- pt_x
-            edge_vert_to_pt$yto <- pt_y
-            
-            # Apply same weight calculations
-            if (!is.null(wp)) {
-                edge_vert_to_pt$d_weighted <- d / way_wt
-                edge_vert_to_pt <- set_maxspeed(edge_vert_to_pt, wt_profile, wt_profile_file)
-                edge_vert_to_pt <- weight_by_num_lanes(edge_vert_to_pt, wt_profile)
-                
-                if (!is.na(gr_cols$time)) {
-                    edge_vert_to_pt <- calc_edge_time_by_name(edge_vert_to_pt, wt_profile)
-                }
+            # Inherit properties from matched edge
+            matched_edge <- edges_for_point_i[1, ]  # Use first edge from index
+            if (!is.na(gr_cols["d_weighted"]) && matched_edge$d > 0) {
+                weight_ratio <- matched_edge$d_weighted / matched_edge$d
+                new_edge_to$d_weighted <- d * weight_ratio
             } else {
-                edge_vert_to_pt$d_weighted <- d
-                if (!is.na(gr_cols$time)) {
-                    default_speed <- 15 # km/h
-                    edge_vert_to_pt$time <- d / (default_speed * 1000 / 3600)
-                    edge_vert_to_pt$time_weighted <- edge_vert_to_pt$time
-                }
+                new_edge_to$d_weighted <- d
             }
             
-            new_edges[[length(new_edges) + 1]] <- edge_vert_to_pt
+            if (!is.na(gr_cols["time"]) && matched_edge$d > 0) {
+                time_per_distance <- matched_edge$time / matched_edge$d
+                new_edge_to$time <- d * time_per_distance
+                
+                if (!is.na(gr_cols["time_weighted"])) {
+                    if (matched_edge$time > 0) {
+                        time_weight_ratio <- matched_edge$time_weighted / matched_edge$time
+                        new_edge_to$time_weighted <- new_edge_to$time * time_weight_ratio
+                    } else {
+                        new_edge_to$time_weighted <- new_edge_to$time
+                    }
+                }
+            }
         }
+        
+        new_edges_for_point[[1]] <- new_edge_to
+        
+        # Add reverse edge if bidirectional
+        if (bidirectional) {
+            new_edge_from <- new_edge_to
+            new_edge_from$edge_id <- paste0("pt_edge_", i, "_from_vert")
+            new_edge_from$from <- verts$id[matched_indices[i]]
+            new_edge_from$to <- pt_id
+            new_edge_from$xfr <- verts$x[matched_indices[i]]
+            new_edge_from$yfr <- verts$y[matched_indices[i]]
+            new_edge_from$xto <- pt_data$x0
+            new_edge_from$yto <- pt_data$y0
+            
+            new_edges_for_point[[2]] <- new_edge_from
+        }
+        
+        return(do.call(rbind, new_edges_for_point))
+    })
+    
+    new_edges_df <- do.call(rbind, new_edges)
+    
+    # Add point index to track which edges belong to which points
+    new_edges_df$n <- rep(unique(index$n), 
+                         sapply(new_edges, nrow))
+    
+    # Following add_nodes_to_graph pattern: match back to original structure
+    graph_to_add <- graph_to_add[match(new_edges_df$n, index$n), ]
+    gr_cols <- gr_cols[which(!is.na(gr_cols))]
+    
+    # Only update columns that exist in new_edges_df
+    available_cols <- names(gr_cols)[names(gr_cols) %in% names(new_edges_df)]
+    gr_cols_subset <- gr_cols[available_cols]
+    
+    for (g in seq_along(gr_cols_subset)) {
+        graph_to_add[, gr_cols_subset[g]] <- new_edges_df[[names(gr_cols_subset)[g]]]
     }
     
-    # Combine new edges with original graph
-    if (length(new_edges) > 0) {
-        new_edges_df <- do.call(rbind, new_edges)
-        
-        # Ensure all columns match between original graph and new edges
-        missing_cols_in_new <- setdiff(names(graph_t), names(new_edges_df))
-        missing_cols_in_orig <- setdiff(names(new_edges_df), names(graph_t))
-        
-        # Add missing columns to new edges with appropriate default values
-        for (col in missing_cols_in_new) {
-            if (is.character(graph_t[[col]])) {
-                new_edges_df[[col]] <- NA_character_
-            } else if (is.numeric(graph_t[[col]])) {
-                new_edges_df[[col]] <- NA_real_
-            } else if (is.logical(graph_t[[col]])) {
-                new_edges_df[[col]] <- NA
-            } else {
-                new_edges_df[[col]] <- NA
-            }
-        }
-        
-        # Add missing columns to original graph if needed
-        for (col in missing_cols_in_orig) {
-            if (is.character(new_edges_df[[col]])) {
-                graph_t[[col]] <- NA_character_
-            } else if (is.numeric(new_edges_df[[col]])) {
-                graph_t[[col]] <- NA_real_
-            } else if (is.logical(new_edges_df[[col]])) {
-                graph_t[[col]] <- NA
-            } else {
-                graph_t[[col]] <- NA
-            }
-        }
-        
-        # Reorder columns to match
-        new_edges_df <- new_edges_df[, names(graph_t)]
-        
-        # Combine graphs
-        result_graph <- rbind(graph_t, new_edges_df)
-        
-        # Update hash
-        attr(result_graph, "hash") <- get_hash(result_graph, contracted = FALSE, force = TRUE)
-        
-        return(result_graph)
-    } else {
-        return(graph_t)
+    # Set highway column to user-specified highway type for new edges
+    if ("highway" %in% names(graph_to_add)) {
+        graph_to_add$highway <- highway
     }
+    
+    return(rbind(graph, graph_to_add))
 }
 
 

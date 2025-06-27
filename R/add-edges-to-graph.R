@@ -64,9 +64,8 @@ add_edges_to_graph <- function(graph,
         stop("'highway' argument is required")
     }
     
-    # Convert to data.frame if needed and get graph columns
-    graph_t <- tbl_to_df(graph)
-    gr_cols <- dodgr_graph_cols(graph_t)
+    gr_cols <- dodgr_graph_cols(graph)
+    measure <- get_geodist_measure(graph)
     
     # Check for id column in xy input before processing
     has_id_col <- FALSE
@@ -80,19 +79,18 @@ add_edges_to_graph <- function(graph,
     }
     
     # Get vertices and match points to them
-    verts <- dodgr_vertices(graph_t)
+    verts <- dodgr_vertices(graph)
+    cli::cli_inform("Matching points to vertices...")
     matched_indices <- match_pts_to_verts(verts, xy_for_processing)
+    cli::cli_inform("Matching points to vertices... done")
     
     # Pre-process xy coordinates
     xy_processed <- pre_process_xy(xy_for_processing)
-    if (nrow(xy_processed) != length(matched_indices)) {
-        stop("Mismatch between number of points and matched vertices")
-    }
     
     # Standardize graph column names following add_nodes_to_graph pattern
-    gr_cols <- dodgr_graph_cols(graph_t)
+    gr_cols <- dodgr_graph_cols(graph)
     gr_cols <- unlist(gr_cols[which(!is.na(gr_cols))])
-    graph_std <- graph_t[, gr_cols] # standardise column names
+    graph_std <- graph[, gr_cols] # standardise column names
     names(graph_std) <- names(gr_cols)
     
     # TODO: genhash is duplicated in multiple files - should be consolidated to utils
@@ -121,6 +119,7 @@ add_edges_to_graph <- function(graph,
     )
     
     # Find first edge containing each matched vertex
+    cli::cli_inform("Finding first edge containing each matched vertex...")
     pts$index <- sapply(matched_indices, function(vert_idx) {
         vertex_id <- verts$id[vert_idx]
         edge_indices <- which(graph_std$from == vertex_id | graph_std$to == vertex_id)
@@ -130,6 +129,14 @@ add_edges_to_graph <- function(graph,
             NA_integer_
         }
     })
+    browser()
+    edges <- data.frame(vertice_id=c(graph_std$from,graph_std$to), edge_id=c(graph_std$edge_id,graph_std$edge_id))
+    edges <- edges[!duplicated(edges$vertice_id), ]
+    pts2 <- pts
+    pts2$vertice_id <- verts[matched_indices,"id"]
+    pts2 <- pts2%>%left_join(edges)
+    pts2$edge_id2 <- graph_std$edge_id[pts2$index]
+
     
     # Check that all vertices have associated edges
     if (any(is.na(pts$index))) {
@@ -163,9 +170,10 @@ add_edges_to_graph <- function(graph,
     edges_to_reference <- graph_std[index$index, ]
     edges_to_reference$n <- index$n  # Add point index
     graph_to_add <- graph[index$index, ]
-    
+
+    cli::cli_inform("Creating new edges...") 
     # Create new edges based on the index
-    new_edges <- lapply(unique(index$n), function(i) {
+    new_edges <- purrr::map(unique(index$n), function(i) {
         
         # Get all edges for this point
         edges_for_point_i <- edges_to_reference[which(edges_to_reference$n == i), ]
@@ -174,7 +182,6 @@ add_edges_to_graph <- function(graph,
         
         # Calculate distance between point and matched vertex
         if (is_graph_spatial(graph_t)) {
-            measure <- get_geodist_measure(graph_t)
             d <- geodist::geodist(
                 data.frame(x = c(pt_data$x0, verts$x[matched_indices[i]]), 
                           y = c(pt_data$y0, verts$y[matched_indices[i]])),
@@ -268,9 +275,9 @@ add_edges_to_graph <- function(graph,
         }
         
         return(do.call(rbind, new_edges_for_point))
-    })
+    }, .progress = "text")
     
-    new_edges_df <- do.call(rbind, new_edges)
+    new_edges_df <- purrr::list_rbind(new_edges)
     
     # Add point index to track which edges belong to which points
     new_edges_df$n <- rep(unique(index$n), 

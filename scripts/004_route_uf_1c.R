@@ -30,7 +30,7 @@ net_contracted_r1 <- dodgr::dodgr_load_streetnet("~/github/dodgr/scripts/ba_cont
 
 RcppParallel::setThreadOptions(numThreads = 6)
 
-r_a_s <- dodgr_distances_batch(graph = net_contracted_r1, from = a, to = s, replace = TRUE, output_dir = "data-raw/ba_dists_agencia_setor", batch_size = 10e6, shortest=FALSE, calculate_time = TRUE)
+r_a_s <- dodgr_distances_batch(graph = net_contracted_r1, from = a, to = s, replace = TRUE, output_dir = "data-raw/ba_dists_agencia_setor", batch_size = 1e6, shortest=FALSE, calculate_time = TRUE)
 
 stop()
 

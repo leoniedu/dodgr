@@ -14,7 +14,7 @@
 #' @param ... Passed to dodgr::dodgr_distances
 #' @importFrom arrow write_parquet open_dataset
 #' @importFrom fs dir_create dir_delete dir_exists
-#' @importFrom data.table as.data.table melt
+#' @importFrom data.table as.data.table melt setnames
 #' @return An Arrow Dataset object (see arrow::open_dataset) pointing to the output_dir
 #' @examples
 #' ds <- dodgr_distances_batch_dt(...)
@@ -30,72 +30,92 @@ dodgr_distances_batch <- function(graph, from, to, ..., batch_size = 1e6, output
   } else {
     fs::dir_create(output_dir)
   }
+  
   if (calculate_time) {
     stopifnot(all(c('time', 'time_weighted')%in%names(graph)))
     graph_t <- graph
     graph_t$d <- graph_t$time
   }
+  
+  # Get dimensions and IDs
   n_from <- nrow(from)
   n_to <- nrow(to)
   id_from <- rownames(from)
   id_to <- rownames(to)
   if (is.null(id_from) | is.null(id_to)) stop("must have rownames")
-  total_pairs <- n_from * n_to
-  batch_from <- min(n_from, ceiling(sqrt(batch_size * n_from / n_to)))
-  batch_to <- min(n_to, ceiling(sqrt(batch_size * n_to / n_from)))
-
-  total_from_batches <- ceiling(n_from / batch_from)
-  total_to_batches <- ceiling(n_to / batch_to)
-
-  batch_counter <- 0
-  total_batches <- total_from_batches * total_to_batches
-
-  for (i in 1:total_from_batches) {
-    from_start <- (i-1) * batch_from + 1
-    from_end <- min(i * batch_from, n_from)
-    batch_from <- from[from_start:from_end, ]
+  
+  # Swap if "to" is larger than "from"
+  swapped <- FALSE
+  if (n_to > n_from) {
+    # Swap from and to
+    temp_from <- from
+    temp_id_from <- id_from
+    temp_n_from <- n_from
+    
+    from <- to
+    id_from <- id_to
+    n_from <- n_to
+    
+    to <- temp_from
+    id_to <- temp_id_from
+    n_to <- temp_n_from
+    
+    swapped <- TRUE
+  }
+  
+  # Calculate batch size
+  batch_r <- floor(batch_size / n_to )
+  if (batch_r < 1) batch_r <- 1  # Ensure at least one row per batch
+  
+  # Calculate total batches
+  total_batches <- ceiling(n_from / batch_r)
+  for (i in 1:total_batches) {
+    cat("Processing batch", i, "of", total_batches, "\n")
+    
+    # Batch by "from" and use all "to"
+    from_start <- (i-1) * batch_r + 1
+    from_end <- min(i * batch_r, n_from)
+    batch_from_data <- from[from_start:from_end, ]
     batch_from_ids <- id_from[from_start:from_end]
     
-
-    for (j in 1:total_to_batches) {
-      batch_counter <- batch_counter + 1
-      cat("Processing batch", batch_counter, "of", total_batches, "\n")
-      to_start <- (j-1) * batch_to + 1
-      to_end <- min(j * batch_to, n_to)
-      batch_to <- to[to_start:to_end, ]
-      batch_to_ids <- id_to[to_start:to_end]
-      batch_results <- dodgr::dodgr_distances(
-        from = batch_from,
-        to = batch_to,
-        graph = graph,
+    # Calculate distances
+    batch_results <- dodgr::dodgr_distances(
+      from = batch_from_data,
+      to = to,
+      graph = graph,
+      shortest = shortest, 
+      ...
+    )
+    batch_results <- round(batch_results)
+    rownames(batch_results) <- batch_from_ids
+    colnames(batch_results) <- id_to
+    dd <- data.table::as.data.table(batch_results, keep.rownames = "from_id")
+    batch_df <- data.table::melt(dd, id.vars = "from_id", variable.name = "to_id", value.name = "distance")
+    
+    # Handle time calculation if needed
+    if (calculate_time) {
+      batch_results_t <- dodgr::dodgr_distances(
+        from = batch_from_data,
+        to = to,
+        graph = graph_t,
         shortest = shortest, 
         ...
       )
-      batch_results <- round(batch_results)
-      rownames(batch_results) <- batch_from_ids
-      colnames(batch_results) <- batch_to_ids
-      dd <- data.table::as.data.table(batch_results, keep.rownames = "from_id")
-      batch_df <- data.table::melt(dd, id.vars = "from_id", variable.name = "to_id", value.name = "distance")
-      if (calculate_time) {
-        batch_results_t <- dodgr::dodgr_distances(
-          from = batch_from,
-          to = batch_to,
-          graph = graph_t,
-          shortest = shortest, 
-          ...
-        )
-        batch_results_t <- round(batch_results_t)
-        rownames(batch_results_t) <- batch_from_ids
-        colnames(batch_results_t) <- batch_to_ids
-        dt <- data.table::as.data.table(batch_results_t, keep.rownames = "from_id")
-        batch_df_t <- data.table::melt(dt, id.vars = "from_id", variable.name = "to_id", value.name = "time")
-        batch_df[,time:=batch_df_t$time]
-      }
-      batch_file <- file.path(output_dir, sprintf("batch_%04d.parquet", batch_counter))
-      arrow::write_parquet(batch_df, batch_file)
-      rm(batch_results, batch_df, dt)
-      gc()
+      batch_results_t <- round(batch_results_t)
+      # Since batch_df already has the correct structure and order from the distance calculation,
+      # we can directly assign the time values without intermediate transformations
+      # Using as.vector() without transpose to match data.table::melt order
+      batch_df[, time := as.vector(batch_results_t)]
     }
+    
+    # If we swapped, swap back the column names in the result
+    if (swapped) {
+      # Rename columns to reflect the original input order using setnames
+      data.table::setnames(batch_df, c("from_id", "to_id"), c("to_id", "from_id"))
+    }
+    # Write each batch to a separate file
+    batch_file <- file.path(output_dir, sprintf("batch_%04d.parquet", i))
+    arrow::write_parquet(batch_df, batch_file)
   }
   arrow::open_dataset(output_dir)
 }

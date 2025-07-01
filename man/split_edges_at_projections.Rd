@@ -4,22 +4,14 @@
 \alias{split_edges_at_projections}
 \title{Split graph edges at projection points}
 \usage{
-split_edges_at_projections(
-  graph,
-  xy,
-  dist_tol = 1e-06,
-  dist_min = dist_tol,
-  debug = FALSE
-)
+split_edges_at_projections(graph, xy, dist_tol = 1, debug = FALSE)
 }
 \arguments{
 \item{graph}{A dodgr street network data frame.}
 
 \item{xy}{A two-column matrix or data frame of coordinates (x, y).}
 
-\item{dist_tol}{Numeric; minimum distance between split points (default 1e-6).}
-
-\item{dist_min}{Numeric; minimum distance from existing vertices to create splits (default dist_tol).}
+\item{dist_tol}{Numeric; minimum distance between split points and from existing vertices in meters (default 1.0).}
 
 \item{debug}{Logical; if TRUE, print debug output.}
 }

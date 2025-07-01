@@ -72,6 +72,7 @@ add_edges_to_graph <- function(graph,
     point_ids <- NULL
     xy_for_processing <- xy
     if (is.data.frame(xy) && "id" %in% names(xy)) {
+        stopifnot(all(!duplicated(xy$id)))
         has_id_col <- TRUE
         point_ids <- as.character(xy$id)
         # Remove id column for coordinate processing
@@ -112,53 +113,20 @@ add_edges_to_graph <- function(graph,
     
     # Create pts structure similar to add_nodes_to_graph
     # pts$index points to the first edge containing each matched vertex
+    # Find first edge containing each matched vertex
+    cli::cli_inform("Finding first edge containing each matched vertex...")
+    edges <- data.frame(vertice_id=c(graph_std$from,graph_std$to), edge_id=c(graph_std$edge_id,graph_std$edge_id), index=c(1:nrow(graph_std),1:nrow(graph_std)))
+    edges <- edges[!duplicated(edges$vertice_id), ]
     pts <- data.frame(
         x0 = xy_processed[, 1],
         y0 = xy_processed[, 2],
         stringsAsFactors = FALSE
     )
-    
-    # Find first edge containing each matched vertex
-    cli::cli_inform("Finding first edge containing each matched vertex...")
-    pts$index <- sapply(matched_indices, function(vert_idx) {
-        vertex_id <- verts$id[vert_idx]
-        edge_indices <- which(graph_std$from == vertex_id | graph_std$to == vertex_id)
-        if (length(edge_indices) > 0) {
-            edge_indices[1]  # Take first edge
-        } else {
-            NA_integer_
-        }
-    })
-    browser()
-    edges <- data.frame(vertice_id=c(graph_std$from,graph_std$to), edge_id=c(graph_std$edge_id,graph_std$edge_id))
-    edges <- edges[!duplicated(edges$vertice_id), ]
-    pts2 <- pts
-    pts2$vertice_id <- verts[matched_indices,"id"]
-    pts2 <- pts2%>%left_join(edges)
-    pts2$edge_id2 <- graph_std$edge_id[pts2$index]
-
-    
-    # Check that all vertices have associated edges
-    if (any(is.na(pts$index))) {
-        missing_edges <- which(is.na(pts$index))
-        stop("Could not find edges for ", length(missing_edges), " matched vertices. ",
-             "This indicates an inconsistency in the graph structure.")
-    }
-    
-    # Expand index to include all potentially bi-directional edges:
-    # Following exact pattern from add_nodes_to_graph
-    index <- lapply(seq_along(pts$index), function(i) {
-        out <- which(
-            (graph_std$from == graph_std$from[pts$index[i]] &
-                 graph_std$to == graph_std$to[pts$index[i]]) |
-                (graph_std$from == graph_std$to[pts$index[i]] &
-                     graph_std$to == graph_std$from[pts$index[i]])
-        )
-        cbind(rep(i, length(out)), out)
-    })
-    index <- data.frame(do.call(rbind, index))
-    names(index) <- c("n", "index")
-    
+    pts$vertice_id <- verts[matched_indices,"id"]
+    pts <- merge(pts, verts, by.x="vertice_id", by.y="id")
+    pts <- merge(pts, edges, by="vertice_id")
+    pts$d <- geodist::geodist(x = data.frame(x=pts$x0, y=pts$y0), y = data.frame(x=pts$x,y=pts$y), paired = TRUE, measure = measure)
+    stopifnot(nrow(pts) == nrow(xy_processed))
     # Create point IDs - use custom IDs if provided, otherwise generate with genhash
     pt_ids <- if (has_id_col) {
         point_ids
@@ -167,124 +135,32 @@ add_edges_to_graph <- function(graph,
     }
     
     # Process edges using the index structure (following add_nodes_to_graph pattern)
-    edges_to_reference <- graph_std[index$index, ]
-    edges_to_reference$n <- index$n  # Add point index
-    graph_to_add <- graph[index$index, ]
-
+    pts$n <- seq_len(nrow(pts))
+    pts$pt_id <- pt_ids
     cli::cli_inform("Creating new edges...") 
     # Create new edges based on the index
-    new_edges <- purrr::map(unique(index$n), function(i) {
-        
-        # Get all edges for this point
-        edges_for_point_i <- edges_to_reference[which(edges_to_reference$n == i), ]
-        pt_data <- pts[i, ]
-        pt_id <- pt_ids[i]
-        
-        # Calculate distance between point and matched vertex
-        if (is_graph_spatial(graph_t)) {
-            d <- geodist::geodist(
-                data.frame(x = c(pt_data$x0, verts$x[matched_indices[i]]), 
-                          y = c(pt_data$y0, verts$y[matched_indices[i]])),
-                measure = measure
-            )[1, 2]
-        } else {
-            d <- sqrt((pt_data$x0 - verts$x[matched_indices[i]])^2 + 
-                     (pt_data$y0 - verts$y[matched_indices[i]])^2)
-        }
-        
-        # Create edges for this point (to and optionally from)
-        new_edges_for_point <- list()
-        
-        # Edge from point to vertex
-        new_edge_to <- data.frame(
-            edge_id = paste0("pt_edge_", i, "_to_vert"),
-            from = pt_id,
-            to = verts$id[matched_indices[i]],
-            xfr = pt_data$x0,
-            yfr = pt_data$y0,
-            xto = verts$x[matched_indices[i]],
-            yto = verts$y[matched_indices[i]],
-            d = d,
-            stringsAsFactors = FALSE
+    ##new_edges <- purrr::pmap(pts, create_edge, .progress = "text")
+    new_edges <- furrr::future_pmap(
+        .l = pts,
+        .f = create_edge,
+        .progress = TRUE,
+        .options = furrr::furrr_options(
+            globals = list(
+                graph_std = graph_std,
+                wp = wp,
+                gr_cols = gr_cols,
+                highway = highway,
+                bidirectional = bidirectional,
+                wt_profile = wt_profile,
+                wt_profile_file = wt_profile_file,
+                way_wt = way_wt
+            )
         )
-        
-        # Calculate weights and times
-        if (!is.null(wp)) {
-            # Use weight profile calculations with the specified highway type
-            new_edge_to$d_weighted <- d / way_wt
-            
-            # Create temporary edge with highway for weight calculations
-            temp_edge <- new_edge_to
-            temp_edge$highway <- highway
-            temp_edge <- set_maxspeed(temp_edge, wt_profile, wt_profile_file)
-            temp_edge <- weight_by_num_lanes(temp_edge, wt_profile)
-            
-            # Copy calculated values back (excluding highway column)
-            if ("d_weighted" %in% names(temp_edge)) {
-                new_edge_to$d_weighted <- temp_edge$d_weighted
-            }
-            
-            if (!is.na(gr_cols["time"])) {
-                temp_edge <- calc_edge_time_by_name(temp_edge, wt_profile)
-                if ("time" %in% names(temp_edge)) {
-                    new_edge_to$time <- temp_edge$time
-                }
-                if ("time_weighted" %in% names(temp_edge)) {
-                    new_edge_to$time_weighted <- temp_edge$time_weighted
-                }
-            }
-        } else {
-            # Inherit properties from matched edge
-            matched_edge <- edges_for_point_i[1, ]  # Use first edge from index
-            if (!is.na(gr_cols["d_weighted"]) && matched_edge$d > 0) {
-                weight_ratio <- matched_edge$d_weighted / matched_edge$d
-                new_edge_to$d_weighted <- d * weight_ratio
-            } else {
-                new_edge_to$d_weighted <- d
-            }
-            
-            if (!is.na(gr_cols["time"]) && matched_edge$d > 0) {
-                time_per_distance <- matched_edge$time / matched_edge$d
-                new_edge_to$time <- d * time_per_distance
-                
-                if (!is.na(gr_cols["time_weighted"])) {
-                    if (matched_edge$time > 0) {
-                        time_weight_ratio <- matched_edge$time_weighted / matched_edge$time
-                        new_edge_to$time_weighted <- new_edge_to$time * time_weight_ratio
-                    } else {
-                        new_edge_to$time_weighted <- new_edge_to$time
-                    }
-                }
-            }
-        }
-        
-        new_edges_for_point[[1]] <- new_edge_to
-        
-        # Add reverse edge if bidirectional
-        if (bidirectional) {
-            new_edge_from <- new_edge_to
-            new_edge_from$edge_id <- paste0("pt_edge_", i, "_from_vert")
-            new_edge_from$from <- verts$id[matched_indices[i]]
-            new_edge_from$to <- pt_id
-            new_edge_from$xfr <- verts$x[matched_indices[i]]
-            new_edge_from$yfr <- verts$y[matched_indices[i]]
-            new_edge_from$xto <- pt_data$x0
-            new_edge_from$yto <- pt_data$y0
-            
-            new_edges_for_point[[2]] <- new_edge_from
-        }
-        
-        return(do.call(rbind, new_edges_for_point))
-    }, .progress = "text")
+    )
     
     new_edges_df <- purrr::list_rbind(new_edges)
-    
-    # Add point index to track which edges belong to which points
-    new_edges_df$n <- rep(unique(index$n), 
-                         sapply(new_edges, nrow))
-    
     # Following add_nodes_to_graph pattern: match back to original structure
-    graph_to_add <- graph_to_add[match(new_edges_df$n, index$n), ]
+    graph_to_add <- graph[new_edges_df$index, ]
     gr_cols <- gr_cols[which(!is.na(gr_cols))]
     
     # Only update columns that exist in new_edges_df
@@ -340,4 +216,85 @@ calc_edge_time_by_name <- function(edge, wt_profile) {
         
         return(edge)
     }
+}
+
+
+create_edge <- function(vertice_id, x0,y0,x,y,n,edge_id,index,d,pt_id,...) {
+    # Create edges for this point (to and optionally from)
+    new_edges_for_point <- list()
+    # Edge from point to vertex
+    new_edge_to <- graph_std[index,]%>%
+        dplyr::mutate(edge_id = paste0(pt_id, "_to_", vertice_id),
+               from = pt_id,
+               to = vertice_id,
+               xfr = x0,
+               yfr = y0,
+               xto = x,
+               yto = y,
+               d = d,
+               n = n,
+               index = index
+        )
+    # Calculate weights and times
+    if (!is.null(wp)) {
+        # Use weight profile calculations with the specified highway type
+        new_edge_to$d_weighted <- d / way_wt
+        
+        # Create temporary edge with highway for weight calculations
+        temp_edge <- new_edge_to
+        temp_edge$highway <- highway
+        temp_edge <- set_maxspeed(temp_edge, wt_profile, wt_profile_file)
+        temp_edge <- weight_by_num_lanes(temp_edge, wt_profile)
+        
+        # Copy calculated values back (excluding highway column)
+        if ("d_weighted" %in% names(temp_edge)) {
+            new_edge_to$d_weighted <- temp_edge$d_weighted
+        }
+        
+        if (!is.na(gr_cols["time"])) {
+            temp_edge <- calc_edge_time(temp_edge, wt_profile)
+            if ("time" %in% names(temp_edge)) {
+                new_edge_to$time <- temp_edge$time
+            }
+            if ("time_weighted" %in% names(temp_edge)) {
+                new_edge_to$time_weighted <- temp_edge$time_weighted
+            }
+        }
+    } else {
+        # Inherit properties from matched edge
+        matched_edge <- graph_std[index, ]  # Use first edge from index
+        if (!is.na(gr_cols["d_weighted"]) ) {
+            weight_ratio <- matched_edge$d_weighted / matched_edge$d
+            new_edge_to$d_weighted <- d * weight_ratio
+        } else {
+            new_edge_to$d_weighted <- d
+        }
+        if (!is.na(gr_cols["time"])) {
+            time_per_distance <- matched_edge$time / matched_edge$d
+            new_edge_to$time <- d * time_per_distance
+            
+            if (!is.na(gr_cols["time_weighted"])) {
+                time_weight_ratio <- matched_edge$time_weighted / matched_edge$time
+                new_edge_to$time_weighted <- new_edge_to$time * time_weight_ratio
+            }
+        }
+    }
+    
+    new_edges_for_point[[1]] <- new_edge_to
+    
+    # Add reverse edge if bidirectional
+    if (bidirectional) {
+        new_edge_from <- new_edge_to
+        new_edge_from <- dplyr::mutate(new_edge_from,
+                                       edge_id=paste0(vertice_id, "_to_", pt_id),
+                                       to = pt_id,
+                                       from  = vertice_id,
+                                       xfr = x,
+                                       yfr = y,
+                                       xto = x0,
+                                       yto = y0,
+                                       d = d)
+        new_edges_for_point[[2]] <- new_edge_from
+    }
+    do.call(rbind, new_edges_for_point)
 }

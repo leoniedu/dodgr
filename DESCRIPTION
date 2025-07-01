@@ -31,9 +31,11 @@ Depends:
     R (>= 3.5.0)
 Imports:
     callr,
+    data.table,
     digest,
     fs,
     geodist (>= 0.1.0),
+    ggrepel,
     magrittr,
     memoise,
     methods,

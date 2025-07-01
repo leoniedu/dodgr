@@ -8,10 +8,10 @@ library(arrow)
 library(sf)
 library(ggplot2)
 library(dplyr)
-devtools::load_all("../dodgr")
+devtools::load_all(here::here("../dodgr"))
 #devtools::load_all("../dodgrconnect/")
 #devtools::load_all()
-dodgr_cache_off()
+#dodgr_cache_off()
 
 
 # Value:
@@ -43,7 +43,7 @@ wibge$penalties <- weighting_profiles$penalties%>%
   mutate(name="motorcar")
 
 wpj <- jsonlite::toJSON(wibge, pretty = TRUE)
-writeLines(wpj, "scripts/profile_hw.json")
+writeLines(wpj, here::here("scripts/profile_hw.json"))
 
 cli::cli_inform(as.character(Sys.time()))
 
@@ -61,6 +61,14 @@ setores <- orce::pontos_setores%>%
   mutate(municipio_codigo=substr(setor,1,7))%>%
   left_join(orce::agencias_mun)
   
+## create edges to the points and agencias
+setores_agencias <- bind_rows(
+  setores%>%
+    transmute(id=paste0("setor_", setor), x=setor_lon, y=setor_lat, agencia_municipio_codigo),
+  agencias%>%transmute(id=paste0('agencia_', agencia_codigo), x=agencia_lon, y=agencia_lat, agencia_municipio_codigo=substr(agencia_codigo,1,7))
+)
+
+
   
 set.seed(1)
 
@@ -68,7 +76,7 @@ cli::cli_inform(as.character(Sys.time()))
 
 sf_fname <- file.path(here::here("data-raw", paste0(tolower(ufsiglanow), "_sf_r.rds")))
 net_r1_fname <- file.path(here::here("data-raw", paste0(tolower(ufsiglanow), "_net_r1.rds")))
-parquet_fname <- glue::glue("../tractdistancesbr/data-raw/{tolower(uf$uf_sigla)}.parquet")
+parquet_fname <- here::here(glue::glue("../tractdistancesbr/data-raw/{tolower(uf$uf_sigla)}.parquet"))
 
 
 
@@ -84,7 +92,7 @@ rm(parquet)
 
 cli::cli_inform(as.character(Sys.time()))
 
-net_r <- dodgr::weight_streetnet(map_sf, id_col = "id", wt_profile_file = "scripts/profile_hw.json", wt_profile = "motorcar")
+net_r <- dodgr::weight_streetnet(map_sf, id_col = "id", wt_profile_file = here::here("scripts/profile_hw.json"), wt_profile = "motorcar")
 
 cli::cli_inform(as.character(Sys.time()))
 
@@ -97,36 +105,25 @@ cli::cli_inform(as.character(Sys.time()))
 net_r1 <- net_r%>%
   filter(component==1)
 
-## create edges to the points and agencias
-setores_agencias <- bind_rows(
-  setores%>%
-    transmute(id=paste0("setor_", setor), x=setor_lon, y=setor_lat, agencia_municipio_codigo),
-  agencias%>%transmute(id=paste0('agencia_', agencia_codigo), x=agencia_lon, y=agencia_lat, agencia_municipio_codigo=substr(agencia_codigo,1,7))
-)
 
 
-set.seed(1);net_connected_r1_0 <- net_r1%>%
-  #slice_sample(n=1000)%>%
-  split_edges_at_projections(xy=setores_agencias, dist_tol = 5, debug = TRUE)
+net_connected_r1_0 <- net_r1%>%
+  split_edges_at_projections(xy=setores_agencias, debug = TRUE, dist_tol = 10)
+
+# net_connected_r1_1 <- net_r1%>%
+#   split_edges_at_projections(xy=setores_agencias, debug = TRUE, dist_tol = 10)
+
+##FIX: bug id from/to when creating artificial edges
+
+library(future)
+plan(multisession, workers = 4)
 net_connected_r1 <- net_connected_r1_0%>%
   add_edges_to_graph(xy=setores_agencias, wt_profile = "motorcar", 
                            highway = "artificial_road", 
-                           wt_profile_file = "scripts/profile_hw.json", 
+                           wt_profile_file = here::here("scripts/profile_hw.json"), 
                            bidirectional = TRUE)
+
+readr::write_rds(net_connected_r1, here::here(paste0("scripts/", tolower(ufsiglanow), "_connected_1.rds")))
+dim(net_connected_r1_0)
 dim(net_connected_r1)
 
-dim(net_connected_r1%>%unique())
-
-stop()
-
-d_agencias_setores <- dodgr_dists_nearest(
-  graph = 
-    net_connected_r1%>%
-    mutate(
-      d=time_weighted,
-      edge_type=if_else(grepl("artificial", highway), "artificial", "real"))
-  , from = setores%>%st_coordinates(), to=agencias%>%st_coordinates())%>%
-  bind_cols(setores%>%st_drop_geometry()%>%select(agencia_municipio_codigo))
-
-
-toc()

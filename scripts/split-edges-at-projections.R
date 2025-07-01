@@ -3,22 +3,6 @@ genhash <- function(len = 10) {
     paste0(sample(c(0:9, letters, LETTERS), size = len, replace = TRUE), collapse = "")
 }
 
-# Helper to map edge segments calculated on the standardised graph
-# back onto rows with full original columns. It takes a prototype row
-# from the original `graph` (which contains *all* columns), and for
-# every row in `segments_std` (which only has the standard columns), a
-# copy of the prototype is made with the standard columns overwritten
-# by the values from `segments_std`.
-convert_segments_to_original <- function(proto_row, segments_std, gr_cols) {
-    segs <- lapply(seq_len(nrow(segments_std)), function(i) {
-        seg <- proto_row
-        for (g in seq_along(gr_cols)) {
-            seg[[gr_cols[g]]] <- segments_std[[names(gr_cols)[g]]][i]
-        }
-        seg
-    })
-    do.call(rbind, segs)
-}
 
 #' Split graph edges at projection points
 #'

@@ -3,23 +3,7 @@ devtools::load_all()
 library(ggplot2)
 library(dplyr)
 
-path_map <- function(network, points_sf, roads_sf) {
-  path <- try(dodgr_paths(network, 
-                          from = head(points_sf%>%st_coordinates(),1),
-                          to = tail(points_sf%>%st_coordinates(),1),
-                          vertices = FALSE))
-  print(network[unlist(path),])
-  # vertices <- dodgr_vertices(network)%>%
-  #   st_as_sf(coords=c("x", "y"), remove=FALSE)
-  ggplot(network) +
-    geom_sf(data=roads_sf, color="gray")+
-    #geom_segment(aes(x = from_lon, y=from_lat, xend = to_lon, yend = to_lat), color="orange", alpha=1/2)+
-    geom_label_repel(aes(x = from_lon, y=from_lat, label=from_id),data=network%>%distinct(from_lon, from_lat, from_id))+
-    #geom_sf_label(aes(label=id),data=points_sf)+
-    geom_sf_label(aes(label=id),data=points_sf)+
-    geom_point(aes(x = x, y=y), color="red", data=points_sf)+
-    geom_segment(aes(x = from_lon, y=from_lat, xend = to_lon, yend = to_lat), data=network[unlist(path),], color="pink", linewidth=2)  
-}
+
 
 # # 1. Create a single line
 # road <- st_linestring(matrix(c(0,0, 10,0), ncol=2, byrow=TRUE))
@@ -185,8 +169,8 @@ message("- Number of edges: ", nrow(net_b))
 # print(initial_paths)
 # net_b[unlist(initial_paths),]
 library(ggrepel)
-xy <- points_sf%>%filter(id%in%c("p_1","p_4"))
-path_map(network=net_b, points_sf = xy, roads_sf = roads_sf)
+xy <- points_sf%>%filter(id%in%c("p_1","p_4"))%>%st_coordinates()%>%data.frame()
+try(path_map(network=net_b, from_coords = xy[1,],to_coords = xy[2,], roads_sf = roads_sf))
 
 ## connect point
 net_b2 <- net_b%>%
@@ -196,14 +180,27 @@ net_b2 <- net_b%>%
 library(ggplot2)
 library(ggrepel)
 library(dplyr)
-path_map(network=net_b2, points_sf = xy, roads_sf = roads_sf)
+path_map(network=net_b2, from_coords = xy[1,],to_coords = xy[2,], roads_sf = roads_sf, crop_roads = FALSE)
 
 
 net_b3 <- net_b%>%
   dplyr::filter(component==1)%>%
-  split_edges_at_projections(xy=xy)%>%
+  split_edges_at_projections(xy=xy, debug = TRUE, dist_tol = 0)
+%>%
   add_edges_to_graph(xy=xy, highway="artificial_road", wt_profile = "motorcar", wt_profile_file = "scripts/profile_hw.json")
-path_map(network=net_b3, points_sf = xy, roads_sf = roads_sf)
+
+path_map(network=net_b3, from_coords = xy[1,],to_coords = xy[2,], roads_sf = roads_sf, crop_roads = FALSE)
+
+
+net_b4 <- net_b%>%
+  dplyr::filter(component==1)%>%
+  split_edges_at_projections_modular(xy=xy, debug = TRUE, dist_tol = 0)
+%>%
+  add_edges_to_graph(xy=xy, highway="artificial_road", wt_profile = "motorcar", wt_profile_file = "scripts/profile_hw.json")
+
+path_map(network=net_b4, from_coords = xy[1,],to_coords = xy[2,], roads_sf = roads_sf, crop_roads = FALSE)
+
+
 stop()
 
 # connect networks

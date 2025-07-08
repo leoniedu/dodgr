@@ -69,6 +69,7 @@ dodgr_distances_batch <- function(graph, from, to, ..., batch_size = 1e6, output
   
   # Calculate total batches
   total_batches <- ceiling(n_from / batch_r)
+  
   for (i in 1:total_batches) {
     cat("Processing batch", i, "of", total_batches, "\n")
     
@@ -113,9 +114,11 @@ dodgr_distances_batch <- function(graph, from, to, ..., batch_size = 1e6, output
       # Rename columns to reflect the original input order using setnames
       data.table::setnames(batch_df, c("from_id", "to_id"), c("to_id", "from_id"))
     }
+    
     # Write each batch to a separate file
     batch_file <- file.path(output_dir, sprintf("batch_%04d.parquet", i))
     arrow::write_parquet(batch_df, batch_file)
   }
+  
   arrow::open_dataset(output_dir)
 }

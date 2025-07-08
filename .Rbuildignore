@@ -27,3 +27,4 @@
 data-raw/
 docs/
 literature/
+^data-raw$

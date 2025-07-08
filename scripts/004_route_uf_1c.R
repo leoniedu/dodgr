@@ -32,7 +32,38 @@ RcppParallel::setThreadOptions(numThreads = 6)
 
 r_a_s <- dodgr_distances_batch(graph = net_contracted_r1, from = a, to = s, replace = TRUE, output_dir = "data-raw/ba_dists_agencia_setor", batch_size = 1e6, shortest=FALSE, calculate_time = TRUE)
 
-stop()
+distancias_ag_ba_0 <- r_a_s%>%transmute(setor=from_id, agencia_codigo=to_id, distancia_km=distance/1000, duracao_h=time/60/60)%>%
+  collect()%>%
+  arrange(agencia_codigo,setor)
+
+
+#gmaps_url = glue::glue("https://www.google.com/maps/dir/{setor_lat},{setor_lon}/{agencia_lat},{agencia_lon}"),
+
+distancias_ag_ba <- distancias_ag_ba_0%>%
+  left_join(orce::pontos_setores%>%sf::st_drop_geometry()%>%select(setor, setor_lat, setor_lon), by=c("setor"))%>%
+  left_join(orce::agencias_bdo%>%sf::st_drop_geometry()%>%select(agencia_codigo, agencia_lat, agencia_lon), by="agencia_codigo")%>%
+  mutate(municipio_codigo=substr(setor,1,7))%>%
+  left_join(orce::agencias_municipios_diaria, by=c("agencia_codigo", "municipio_codigo"))%>%
+  mutate(gmaps=glue::glue("https://www.google.com/maps/dir/{setor_lat},{setor_lon}/{agencia_lat},{agencia_lon}"))%>%
+  arrange(agencia_codigo,setor)
+
+usethis::use_data(distancias_ag_ba, overwrite = TRUE)
+
+distancias_ag_ba_mun <- distancias_ag_ba%>%
+  distinct(agencia_codigo, municipio_codigo, diaria_municipio)%>%
+  arrange(agencia_codigo,municipio_codigo)
+
+openxlsx2::write_xlsx(list(
+     distancia=tidyr::pivot_wider(distancias_ag_ba_0%>%select(-duracao_h), values_from = distancia_km, names_from = agencia_codigo),
+     duracao=tidyr::pivot_wider(distancias_ag_ba_0%>%select(-distancia_km), values_from = duracao_h, names_from = agencia_codigo),
+     mapa=tidyr::pivot_wider(distancias_ag_ba%>%
+                               select(agencia_codigo, setor, gmaps), values_from = gmaps, names_from = agencia_codigo),
+     diaria_municipio=tidyr::pivot_wider(distancias_ag_ba_mun, values_from = diaria_municipio, names_from = agencia_codigo)
+     
+     ), '~/tmp/distancias_ag_ba.xlsx')
+
+
+
 
 # Process coordinates in batches
 setores_coords <- st_coordinates(setores)
